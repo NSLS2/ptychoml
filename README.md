@@ -4,12 +4,9 @@ Neural network inference for ptychography. Runs PtychoViT models via TensorRT.
 
 ## About PtychoViT
 
-PtychoViT is a Vision Transformer ([ViT](https://arxiv.org/abs/2010.11929)) adapted for ptychographic reconstruction. It takes a batch of diffraction patterns and directly predicts amplitude and phase estimates of the object and probe — orders of magnitude faster than iterative (DM, ML) methods, enabling real-time feedback during live scans.
+PtychoViT is a Vision Transformer ([ViT](https://arxiv.org/abs/2010.11929)) adapted for ptychographic reconstruction. It takes a batch of diffraction patterns and directly predicts amplitude and phase estimates — orders of magnitude faster than iterative (DM, ML) methods, enabling real-time feedback during live scans.
 
-The model is developed at Argonne National Laboratory (ANL) by [Peco Myint](mailto:pmyint@anl.gov) and colleagues. Training code lives in the `ptycho-vit` repo (private, maintained at ANL). Related published work:
-
-- [PtychoDV](https://arxiv.org/abs/2310.07504) — ViT-based deep unrolling for ptychography (Gan et al., 2024)
-- [PtychoFormer](https://arxiv.org/abs/2410.17377) — Transformer-based single-shot phase retrieval (2024)
+The model is developed at Argonne National Laboratory (ANL). Training code lives in the `ptycho-vit` repo (private, maintained at ANL).
 
 `ptychoml` handles the **inference** side only — taking a trained model exported to ONNX, converting it to a TensorRT engine, and running fast batched inference on a GPU.
 
