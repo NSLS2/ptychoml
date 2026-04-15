@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pixi/
+.pytest_cache/
+dist/
+build/
+*.engine
+*.onnx
+.env
+.vscode/
+.idea/
+*.swp
+*.swo

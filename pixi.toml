@@ -1,0 +1,47 @@
+[workspace]
+name = "ptychoml"
+description = "Neural network inference for ptychography (PtychoViT TensorRT)"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[system-requirements]
+libc = { family = "glibc", version = "2.35" }
+
+# Base dependencies shared by all environments (including CI)
+[dependencies]
+python = ">=3.12,<3.14"
+numpy = ">=1.20"
+pytest = "*"
+
+# GPU/TensorRT dependencies (not available on CI runners)
+[feature.gpu.dependencies]
+cuda-cudart = ">=12.6.77,<13"
+libcublas = ">=12.6.3.3,<13"
+libcufft = ">=11.3.0.4,<12"
+libcurand = ">=10.3.7.77,<11"
+libcusparse-dev = ">=12.5.4.2,<13"
+libcusolver = ">=11.7.1.2,<12"
+pycuda = "*"
+onnx = "*"
+
+[feature.gpu.pypi-dependencies]
+tensorrt-cu12 = "*"
+
+# Python version features for CI matrix
+[feature.py312.dependencies]
+python = ">=3.12,<3.13"
+
+[feature.py313.dependencies]
+python = ">=3.13,<3.14"
+
+[environments]
+default = { features = ["gpu"], solve-group = "default" }
+ci-py312 = { features = ["py312"], solve-group = "ci-py312" }
+ci-py313 = { features = ["py313"], solve-group = "ci-py313" }
+
+[pypi-dependencies]
+ptychoml = { path = ".", editable = true }
+
+[tasks]
+test = "pytest tests/ -v"
+build-engine = "ptychoml-build-engine"
