@@ -45,6 +45,37 @@ def test_cli_help_runs(capsys):
     assert "Build a TensorRT engine" in captured.out
 
 
+def test_predict_cli_help_runs(capsys):
+    """`ptychoml-predict --help` runs without touching TRT."""
+    from ptychoml.cli import predict_main
+
+    with pytest.raises(SystemExit) as exc_info:
+        predict_main(["--help"])
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "Run PtychoViT inference" in captured.out
+
+
+def test_predict_cli_missing_dataset(tmp_path):
+    """predict_main reports an error when the dataset key is not in the file."""
+    import h5py
+    import numpy as np
+
+    h5_path = tmp_path / "test.h5"
+    with h5py.File(h5_path, "w") as f:
+        f.create_dataset("other_key", data=np.zeros((2, 8, 8), dtype=np.float32))
+
+    from ptychoml.cli import predict_main
+
+    ret = predict_main([
+        "--engine", "dummy.engine",
+        "--data", str(h5_path),
+        "--output", str(tmp_path / "out.h5"),
+        "--dataset", "diffamp",
+    ])
+    assert ret == 1
+
+
 def test_reshape_output_flat():
     """Pure utility — reshape flat TRT output to B,H,W or B,2,H,W."""
     import numpy as np

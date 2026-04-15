@@ -58,6 +58,30 @@ engine = build_engine("model.onnx", fp16=False, tf32=True)
 save_engine(engine, "model.engine")
 ```
 
+**Run inference on an HDF5 dataset:**
+
+```bash
+pixi run predict --engine model.engine --data scan_1234.h5 --output results.h5
+# or
+ptychoml-predict --engine model.engine --data scan_1234.h5 --output results.h5
+```
+
+By default, diffraction amplitudes are read from the `diffamp` dataset key (matching the format used by [holoptycho](https://github.com/NSLS2/holoptycho)). Use `--dataset` to specify a different key:
+
+```bash
+pixi run predict --engine model.engine --data scan.h5 --output results.h5 --dataset entry/data/data
+```
+
+Additional options:
+
+| Flag | Description |
+|---|---|
+| `--gpu N` | CUDA device ordinal (default: 0) |
+| `--shifted` | Set if input data has been fftshift'd |
+| `--dataset KEY` | HDF5 dataset key for diffraction amplitudes (default: `diffamp`) |
+
+The output HDF5 file contains a `predictions` dataset with shape `(N, 2, H, W)` or `(N, H, W)` depending on the model. If the input file has a `points` dataset (scan positions), it is copied through to the output.
+
 ## Run tests
 
 ```bash

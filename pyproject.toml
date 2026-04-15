@@ -10,6 +10,7 @@ license = {file = "LICENSE"}
 
 [project.scripts]
 ptychoml-build-engine = "ptychoml.cli:main"
+ptychoml-predict = "ptychoml.cli:predict_main"
 
 [tool.setuptools]
 packages = ["ptychoml"]
