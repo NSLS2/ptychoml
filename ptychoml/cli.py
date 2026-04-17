@@ -76,7 +76,12 @@ def predict_main(argv=None) -> int:
     parser.add_argument(
         "--output",
         required=True,
-        help="Path for the output HDF5 file with predictions.",
+        help="Path for the output file with predictions (.npy by default, .h5 if --h5 is set).",
+    )
+    parser.add_argument(
+        "--h5",
+        action="store_true",
+        help="Write output as HDF5 (.h5) instead of the default NumPy (.npy) format.",
     )
     parser.add_argument(
         "--dataset",
@@ -135,14 +140,24 @@ def predict_main(argv=None) -> int:
     predictions = np.concatenate(all_preds, axis=0)
     print(f"Total predictions: shape={predictions.shape}")
 
-    with h5py.File(args.output, "w") as f_out:
-        f_out.create_dataset("predictions", data=predictions)
-        # Copy scan points through if present in input
+    if args.h5:
+        with h5py.File(args.output, "w") as f_out:
+            f_out.create_dataset("predictions", data=predictions)
+            # Copy scan points through if present in input
+            with h5py.File(args.data, "r") as f_in:
+                if "points" in f_in:
+                    f_out.create_dataset("points", data=np.array(f_in["points"]))
+        print(f"Wrote predictions to {args.output} (HDF5)")
+    else:
+        np.save(args.output, predictions)
+        print(f"Wrote predictions to {args.output} (npy)")
+        # Save points to a sibling file if present in input
         with h5py.File(args.data, "r") as f_in:
             if "points" in f_in:
-                f_out.create_dataset("points", data=np.array(f_in["points"]))
-
-    print(f"Wrote predictions to {args.output}")
+                from pathlib import Path
+                points_path = Path(args.output).with_suffix("").as_posix() + "_points.npy"
+                np.save(points_path, np.array(f_in["points"]))
+                print(f"Wrote points to {points_path} (npy)")
     return 0
 
 
