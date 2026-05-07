@@ -11,6 +11,7 @@ libc = { family = "glibc", version = "2.35" }
 [dependencies]
 python = ">=3.12,<3.14"
 numpy = ">=1.20"
+scipy = ">=1.10"
 pytest = "*"
 h5py = "*"
 

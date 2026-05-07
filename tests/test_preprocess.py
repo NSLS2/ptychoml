@@ -4,9 +4,13 @@ import pytest
 
 from ptychoml.preprocess import (
     adjust_object_for_pad,
+    apply_angle_correction_x,
     apply_intensity_floor,
+    auto_detect_roi_offsets,
+    compute_object_shape_from_scan,
     compute_sample_pixel_size,
     crop_to_roi,
+    fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
     resize_diffraction_patterns,
@@ -186,6 +190,119 @@ def test_apply_intensity_floor_does_not_mutate_input():
     original = arr.copy()
     _ = apply_intensity_floor(arr, threshold=1.0)
     np.testing.assert_array_equal(arr, original)
+
+
+# ----- fourier_shift --------------------------------------------------------
+
+def test_fourier_shift_integer_shift_matches_roll():
+    """An integer Fourier shift should match np.roll on a smooth input."""
+    rng = np.random.default_rng(0)
+    h, w = 16, 16
+    img = rng.standard_normal((1, h, w)).astype(np.float32)
+    shifts = np.array([[3, -2]], dtype=np.float32)  # (dy, dx)
+    out = fourier_shift(img, shifts)
+    expected = np.roll(img, shift=(3, -2), axis=(-2, -1))
+    np.testing.assert_allclose(out, expected, atol=1e-3)
+
+
+def test_fourier_shift_zero_shift_is_identity():
+    rng = np.random.default_rng(1)
+    img = rng.standard_normal((2, 8, 8)).astype(np.float32)
+    out = fourier_shift(img, np.zeros((2, 2), dtype=np.float32))
+    np.testing.assert_allclose(out, img, atol=1e-4)
+
+
+# ----- compute_object_shape_from_scan ---------------------------------------
+
+def test_compute_object_shape_from_scan_basic():
+    # 1 µm scan range, 5 nm pixel → 200 px scan + 180 probe + 30 pad = 410.
+    nx, ny = compute_object_shape_from_scan(
+        x_range_um=1.0, y_range_um=1.0,
+        nx_prb=180, ny_prb=180,
+        x_pixel_m=5e-9, y_pixel_m=5e-9,
+        obj_pad=30,
+    )
+    assert nx == 410
+    assert ny == 410
+    # Result must be even (FFT-friendly).
+    assert nx % 2 == 0
+    assert ny % 2 == 0
+
+
+def test_compute_object_shape_from_scan_rounds_up_to_even():
+    # 0.99 µm @ 5 nm → ceil = 198 px; +180 probe + 31 pad = 409 → 410.
+    nx, _ = compute_object_shape_from_scan(
+        x_range_um=0.99, y_range_um=0.99,
+        nx_prb=180, ny_prb=180,
+        x_pixel_m=5e-9, y_pixel_m=5e-9,
+        obj_pad=31,
+    )
+    assert nx % 2 == 0
+
+
+def test_compute_object_shape_from_scan_rejects_zero_pixel():
+    with pytest.raises(ValueError):
+        compute_object_shape_from_scan(
+            x_range_um=1.0, y_range_um=1.0,
+            nx_prb=180, ny_prb=180,
+            x_pixel_m=0.0, y_pixel_m=5e-9,
+            obj_pad=30,
+        )
+
+
+# ----- apply_angle_correction_x ---------------------------------------------
+
+def test_apply_angle_correction_x_uses_cos_below_45():
+    out = apply_angle_correction_x(10.0, angle_deg=30.0)
+    assert out == pytest.approx(10.0 * np.cos(np.deg2rad(30.0)))
+
+
+def test_apply_angle_correction_x_uses_sin_above_45():
+    out = apply_angle_correction_x(10.0, angle_deg=60.0)
+    assert out == pytest.approx(10.0 * np.sin(np.deg2rad(60.0)))
+
+
+def test_apply_angle_correction_x_array_input():
+    arr = np.array([1.0, 2.0, 3.0])
+    out = apply_angle_correction_x(arr, angle_deg=0.0)
+    np.testing.assert_allclose(out, arr)
+
+
+# ----- auto_detect_roi_offsets ----------------------------------------------
+
+def test_auto_detect_roi_offsets_finds_known_center():
+    """A bright Gaussian-like blob at a known center should be recovered."""
+    H, W = 200, 256
+    cy, cx = 130, 90
+    ys, xs = np.indices((H, W))
+    blob = np.exp(-((ys - cy) ** 2 + (xs - cx) ** 2) / 50.0)
+    frames = (blob * 1000.0).astype(np.uint16)[None].repeat(20, axis=0)
+    bx0, by0 = auto_detect_roi_offsets(frames, nx=64, ny=64)
+    # Crop should be centered on the blob: bx0 ≈ cx - 32, by0 ≈ cy - 32.
+    assert abs(bx0 - (cx - 32)) <= 1
+    assert abs(by0 - (cy - 32)) <= 1
+
+
+def test_auto_detect_roi_offsets_handles_saturation():
+    """Saturated pixels should be masked and not pull the COM."""
+    H, W = 64, 64
+    cy, cx = 40, 30
+    ys, xs = np.indices((H, W))
+    blob = np.exp(-((ys - cy) ** 2 + (xs - cx) ** 2) / 20.0)
+    frames = (blob * 100.0).astype(np.uint16)
+    # Inject a saturated pixel that would otherwise drag the COM.
+    frames[5, 5] = np.iinfo(np.uint16).max
+    frames = frames[None].repeat(10, axis=0)
+    bx0, by0 = auto_detect_roi_offsets(frames, nx=16, ny=16)
+    # Without masking, the saturated pixel at (5, 5) would skew the center.
+    # With masking, we recover something near the true blob center.
+    assert abs(bx0 - (cx - 8)) <= 2
+    assert abs(by0 - (cy - 8)) <= 2
+
+
+def test_auto_detect_roi_offsets_zero_frames_returns_origin():
+    frames = np.zeros((5, 32, 32), dtype=np.uint16)
+    assert auto_detect_roi_offsets(frames, nx=16, ny=16) == (0, 0)
 
 
 # ----- compute_sample_pixel_size --------------------------------------------
