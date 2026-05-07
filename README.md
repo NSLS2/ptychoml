@@ -97,7 +97,6 @@ from ptychoml import (
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
-    mask_saturated_pixels,
     normalize_intensity,
     resize_diffraction_patterns,
     zero_pad_to_target,
@@ -110,10 +109,10 @@ or HXN h5_conv). Some functions are kept as side-by-side variants; they
 will be deduped in a follow-up once call sites are unified.
 
 **GPU support:** the in-place mutating functions (`mask_hot_pixels`,
-`apply_intensity_floor`, `mask_saturated_pixels`), `crop_to_roi`,
-`normalize_intensity`, and `inpaint_bad_pixels` work transparently on
-`cupy` arrays. Functions that use `scipy.fft` / `scipy.ndimage`
-(`fourier_shift`, `find_outlier_pixels`) remain numpy-only for now.
+`apply_intensity_floor`), `crop_to_roi`, `normalize_intensity`, and
+`inpaint_bad_pixels` work transparently on `cupy` arrays. Functions
+that use `scipy.fft` / `scipy.ndimage` (`fourier_shift`,
+`find_outlier_pixels`) remain numpy-only for now.
 
 Functions are grouped into four families so variants can be evaluated
 side-by-side. The same grouping is used in
@@ -145,7 +144,6 @@ Change the spatial extent of frames. Three variants by use case.
 |---|---|
 | `mask_hot_pixels(arr, threshold, fill=0.0)` | Replace values above `threshold` with `fill`. **Mutates in place** and returns `arr`. |
 | `apply_intensity_floor(arr, threshold)` | Zero values strictly below `threshold` (noise-floor cutoff). Symmetric to `mask_hot_pixels`. **Mutates in place.** |
-| `mask_saturated_pixels(arr, fill=0.0)` | Replace dtype-max sentinel values (e.g. `65535` for `uint16`) with `fill`. **Mutates in place.** |
 | `inpaint_bad_pixels(arr, coords, radius=1)` | Replace each `(row, col)` in `coords` with the median of a `(2*radius+1)²` neighborhood. **Mutates in place.** |
 | `find_outlier_pixels(data, tolerance=3, worry_about_edges=True, get_fixed_image=False)` | Auto-detect hot/dead pixels via median-filter difference (`> 10·σ`). Returns coords; optionally also returns a fixed copy. |
 
@@ -165,8 +163,8 @@ The map below shows where each one fits in the live streaming flow, so
 you can match a ptychoml function to its real-world call site:
 
 - **Per-frame** (`ImageBatchOp` in `holoptycho/preprocess.py`):
-  `crop_to_roi` for the detector window, then `mask_saturated_pixels`
-  for dtype-max bad-pixel sentinels.
+  `crop_to_roi` for the detector window, then `mask_hot_pixels` with a
+  detector-specific saturation threshold.
 - **Per-batch** (`ImagePreprocessorOp`): `inpaint_bad_pixels` for known
   bad-pixel coordinates, `apply_intensity_floor` for the optional noise
   threshold. The same operator also runs inline `np.rot90`,

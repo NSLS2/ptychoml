@@ -12,7 +12,6 @@ from ptychoml.preprocess import (
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
-    mask_saturated_pixels,
     normalize_intensity,
     resize_diffraction_patterns,
     zero_pad_to_target,
@@ -93,21 +92,6 @@ def test_mask_hot_pixels_custom_fill():
     np.testing.assert_array_equal(out, np.array([1.0, -1.0, -1.0], dtype=np.float32))
 
 
-# ----- mask_saturated_pixels ------------------------------------------------
-
-def test_mask_saturated_pixels_replaces_dtype_max():
-    arr = np.array([0, 100, 65535, 200], dtype=np.uint16)
-    out = mask_saturated_pixels(arr)
-    assert out is arr
-    np.testing.assert_array_equal(arr, np.array([0, 100, 0, 200], dtype=np.uint16))
-
-
-def test_mask_saturated_pixels_uint32():
-    arr = np.array([0, 4294967295, 5], dtype=np.uint32)
-    out = mask_saturated_pixels(arr, fill=0)
-    np.testing.assert_array_equal(arr, np.array([0, 0, 5], dtype=np.uint32))
-
-
 # ----- cupy compatibility (gated) -------------------------------------------
 
 def test_mask_hot_pixels_works_on_cupy():
@@ -145,14 +129,6 @@ def test_crop_to_roi_works_on_cupy():
     assert isinstance(out, cp.ndarray)
 
 
-def test_mask_saturated_pixels_works_on_cupy():
-    cp = pytest.importorskip("cupy")
-    arr = cp.asarray(np.array([0, 100, 65535, 200], dtype=np.uint16))
-    out = mask_saturated_pixels(arr)
-    assert out is arr
-    np.testing.assert_array_equal(
-        cp.asnumpy(arr), np.array([0, 100, 0, 200], dtype=np.uint16)
-    )
 
 
 # ----- compute_sample_pixel_size --------------------------------------------
@@ -262,7 +238,7 @@ def test_auto_detect_roi_offsets_finds_known_center():
 
 
 def test_auto_detect_roi_offsets_handles_saturation():
-    """Saturated pixels should be masked and not pull the COM."""
+    """Pixels above saturation_threshold should be masked and not pull the COM."""
     H, W = 64, 64
     cy, cx = 40, 30
     ys, xs = np.indices((H, W))
@@ -271,7 +247,9 @@ def test_auto_detect_roi_offsets_handles_saturation():
     # Inject a saturated pixel that would otherwise drag the COM.
     frames[5, 5] = np.iinfo(np.uint16).max
     frames = frames[None].repeat(10, axis=0)
-    bx0, by0 = auto_detect_roi_offsets(frames, nx=16, ny=16)
+    bx0, by0 = auto_detect_roi_offsets(
+        frames, nx=16, ny=16, saturation_threshold=60000
+    )
     # Without masking, the saturated pixel at (5, 5) would skew the center.
     # With masking, we recover something near the true blob center.
     assert abs(bx0 - (cx - 8)) <= 2

@@ -96,21 +96,31 @@ def auto_detect_roi_offsets(
     nx: int,
     ny: int,
     n_sample: int = 50,
+    saturation_threshold: float | None = None,
 ) -> Tuple[int, int]:
     """Auto-detect detector ROI offsets from the diffraction-pattern center.
 
-    Averages up to ``n_sample`` frames, masks pixels saturated at the
-    dtype max (hot pixels / detector artifacts that drag the COM off
+    Averages up to ``n_sample`` frames, optionally masks pixels above
+    ``saturation_threshold`` (which would otherwise drag the COM off
     course), then computes the intensity-weighted center of mass and
     returns ``(bx0, by0)`` such that an ``nx × ny`` crop is centered on
     it. Returns ``(0, 0)`` if the masked frame has zero total intensity.
+
+    ``saturation_threshold`` defaults to ``None`` (no masking). Supply a
+    calibrated value when your detector saturates at a known intensity.
+    The previous implicit dtype-max sentinel only worked for raw
+    integer-dtype reads and was useless once data was converted to
+    float32, so callers must now opt in explicitly.
 
     Source: holoptycho/scripts/replay_from_tiled.py ``_auto_batch_offsets``.
     """
     sample = frames[:min(n_sample, len(frames))].astype(np.float64)
     mean_frame = sample.mean(axis=0)
-    sat_mask = (sample == np.iinfo(frames.dtype).max).any(axis=0)
-    masked = np.where(sat_mask, 0.0, mean_frame)
+    if saturation_threshold is None:
+        masked = mean_frame
+    else:
+        sat_mask = (sample > saturation_threshold).any(axis=0)
+        masked = np.where(sat_mask, 0.0, mean_frame)
     total = masked.sum()
     if total <= 0:
         return 0, 0
@@ -262,14 +272,10 @@ def resize_diffraction_patterns(dp: ArrayLike, target_n: int) -> np.ndarray:
             end_x = min(peak_x + target_n // 2, pattern.shape[-1])
             start_y = max(peak_y - target_n // 2, 0)
             end_y = min(peak_y + target_n // 2, pattern.shape[-2])
-            pattern = pattern[start_y:end_y, start_x:end_x]
+            pattern = crop_to_roi(pattern, [[start_y, end_y], [start_x, end_x]])
 
         if pattern.shape[-1] < target_n or pattern.shape[-2] < target_n:
-            padded = np.zeros((target_n, target_n), dtype=pattern.dtype)
-            px = (target_n - pattern.shape[-1]) // 2
-            py = (target_n - pattern.shape[-2]) // 2
-            padded[py:py + pattern.shape[-2], px:px + pattern.shape[-1]] = pattern
-            pattern = padded
+            pattern = zero_pad_to_target(pattern, target_n)
 
         resized.append(pattern)
 
@@ -283,7 +289,6 @@ def resize_diffraction_patterns(dp: ArrayLike, target_n: int) -> np.ndarray:
 #   (a) Threshold-based masks (single-pass, value test):
 #         - mask_hot_pixels:        value > threshold → fill
 #         - apply_intensity_floor:  value < threshold → 0    (symmetric)
-#         - mask_saturated_pixels:  value == dtype max → fill
 #   (b) Median inpainting at known coords:
 #         - inpaint_bad_pixels:     coords as (K, 2); 3×3 (or larger) median
 #   (c) Auto-detection (no caller-supplied coords):
@@ -321,23 +326,6 @@ def apply_intensity_floor(arr: np.ndarray, threshold: float) -> np.ndarray:
     ``detmap_threshold`` block (also in eiger_test cupy variant).
     """
     arr[arr < threshold] = 0
-    return arr
-
-
-def mask_saturated_pixels(arr: np.ndarray, fill: float = 0.0) -> np.ndarray:
-    """Replace dtype-max sentinel values with ``fill``, in place.
-
-    Many detectors signal a bad pixel by writing the max representable
-    value of the unsigned-integer dtype (e.g. ``65535`` for ``uint16``,
-    interpreted as ``-1``). This zeroes them out without needing the
-    caller to remember the dtype's max. Works on numpy or cupy arrays.
-
-    Source: holoptycho/preprocess.py ``ImageBatchOp.compute`` and
-    eiger_test/pipeline_preprocess.py inline
-    ``image[image == np.iinfo(image.dtype).max] = 0``.
-    """
-    sentinel = np.iinfo(arr.dtype).max
-    arr[arr == sentinel] = fill
     return arr
 
 
