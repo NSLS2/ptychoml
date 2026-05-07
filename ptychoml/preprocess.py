@@ -149,3 +149,79 @@ def compute_sample_pixel_size(
     ``dx_sample = λ * z / (N * dx_detector)``
     """
     return wavelength_m * detector_distance_m / (n_pixels * ccd_pixel_size_m)
+
+
+def crop_to_roi(arr: np.ndarray, roi) -> np.ndarray:
+    """Crop the last two axes of ``arr`` to a fixed ``[[y0, y1], [x0, x1]]`` ROI.
+
+    Used when the crop window is known from detector calibration and should
+    be applied identically to every frame (e.g. holoptycho streaming). The
+    ROI uses Python half-open ranges: ``[y0, y1)`` rows, ``[x0, x1)`` cols.
+
+    Parameters
+    ----------
+    arr : ndarray
+        Array of shape ``(..., H, W)``. Leading dims are preserved.
+    roi : array-like of shape (2, 2)
+        ``[[y0, y1], [x0, x1]]``.
+
+    Returns
+    -------
+    ndarray
+        View into ``arr`` for the requested window.
+    """
+    roi = np.asarray(roi)
+    y0, y1 = int(roi[0, 0]), int(roi[0, 1])
+    x0, x1 = int(roi[1, 0]), int(roi[1, 1])
+    return arr[..., y0:y1, x0:x1]
+
+
+def inpaint_bad_pixels(
+    arr: np.ndarray,
+    coords,
+    radius: int = 1,
+) -> np.ndarray:
+    """Replace known bad-pixel coordinates with the median of their neighbourhood.
+
+    For each ``(row, col)`` in ``coords``, replaces the pixel at that
+    location with the median of the surrounding ``(2*radius+1) × (2*radius+1)``
+    window. Operates on the last two axes; works for both 2D arrays and
+    stacks of shape ``(N, H, W)``. Returns a copy.
+
+    Parameters
+    ----------
+    arr : ndarray
+        Array of shape ``(..., H, W)``.
+    coords : array-like of shape (K, 2)
+        ``(row, col)`` pairs of bad-pixel locations.
+    radius : int
+        Half-window size. Default 1 (3×3 neighborhood).
+
+    Returns
+    -------
+    ndarray
+        A copy of ``arr`` with the bad-pixel locations replaced.
+    """
+    out = arr.copy()
+    h, w = out.shape[-2], out.shape[-1]
+    coords = np.asarray(coords).reshape(-1, 2)
+    for r, c in coords:
+        r, c = int(r), int(c)
+        r0 = max(r - radius, 0)
+        r1 = min(r + radius + 1, h)
+        c0 = max(c - radius, 0)
+        c1 = min(c + radius + 1, w)
+        window = out[..., r0:r1, c0:c1]
+        out[..., r, c] = np.median(window, axis=(-2, -1))
+    return out
+
+
+def apply_intensity_floor(arr: np.ndarray, threshold: float) -> np.ndarray:
+    """Zero values strictly below ``threshold`` (noise-floor cutoff).
+
+    Returns a copy; the input array is not modified. Symmetric to
+    ``mask_hot_pixels`` (which zeros values *above* a threshold).
+    """
+    out = arr.copy()
+    out[out < threshold] = 0
+    return out

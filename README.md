@@ -88,18 +88,24 @@ Array-in / array-out helpers for preparing diffraction data and reconstructions 
 
 ```python
 from ptychoml import (
-    resize_diffraction_patterns,
+    apply_intensity_floor,
     adjust_object_for_pad,
-    mask_hot_pixels,
     compute_sample_pixel_size,
+    crop_to_roi,
+    inpaint_bad_pixels,
+    mask_hot_pixels,
+    resize_diffraction_patterns,
 )
 ```
 
 | Function | Purpose |
 |---|---|
+| `crop_to_roi(arr, roi)` | Crop the last two axes to a fixed `[[y0, y1], [x0, x1]]` window. Use when the crop region is calibrated and identical for every frame. |
 | `resize_diffraction_patterns(dp, target_n)` | Crop each pattern around its per-frame argmax or zero-pad to `target_n × target_n`. Mask hot pixels first if the detector has saturated outliers. |
 | `adjust_object_for_pad(obj, scale_y, scale_x, obj_pad)` | Trim or zero-pad an object's last two axes by `obj_pad * (scale - 1)` after a pixel-grid rescale, to match a backend's fixed padding allocation. |
 | `mask_hot_pixels(arr, threshold, fill=0.0)` | Replace values above `threshold` with `fill` (saturated/dead-pixel masking). Returns a copy. |
+| `inpaint_bad_pixels(arr, coords, radius=1)` | Replace each `(row, col)` in `coords` with the median of a `(2*radius+1)²` neighborhood. Operates on the last two axes. Returns a copy. |
+| `apply_intensity_floor(arr, threshold)` | Zero values strictly below `threshold` (noise-floor cutoff). Returns a copy. |
 | `compute_sample_pixel_size(wavelength_m, detector_distance_m, ccd_pixel_size_m, n_pixels)` | Far-field pixel size at the sample plane: `λ z / (N · dx_detector)`. |
 
 ## Run tests

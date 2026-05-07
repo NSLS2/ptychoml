@@ -4,7 +4,10 @@ import pytest
 
 from ptychoml.preprocess import (
     adjust_object_for_pad,
+    apply_intensity_floor,
     compute_sample_pixel_size,
+    crop_to_roi,
+    inpaint_bad_pixels,
     mask_hot_pixels,
     resize_diffraction_patterns,
 )
@@ -113,6 +116,76 @@ def test_mask_hot_pixels_custom_fill():
     arr = np.array([1.0, 2.0, 3.0], dtype=np.float32)
     out = mask_hot_pixels(arr, threshold=1.5, fill=-1.0)
     np.testing.assert_array_equal(out, np.array([1.0, -1.0, -1.0], dtype=np.float32))
+
+
+# ----- compute_sample_pixel_size --------------------------------------------
+
+# ----- crop_to_roi ----------------------------------------------------------
+
+def test_crop_to_roi_basic():
+    arr = np.arange(20 * 30, dtype=np.float32).reshape(20, 30)
+    roi = [[5, 15], [10, 25]]
+    out = crop_to_roi(arr, roi)
+    assert out.shape == (10, 15)
+    np.testing.assert_array_equal(out, arr[5:15, 10:25])
+
+
+def test_crop_to_roi_3d_stack():
+    """Leading batch dim is preserved; only last two axes are cropped."""
+    arr = np.arange(4 * 20 * 30, dtype=np.float32).reshape(4, 20, 30)
+    roi = np.array([[5, 15], [10, 25]])
+    out = crop_to_roi(arr, roi)
+    assert out.shape == (4, 10, 15)
+    np.testing.assert_array_equal(out, arr[:, 5:15, 10:25])
+
+
+# ----- inpaint_bad_pixels ---------------------------------------------------
+
+def test_inpaint_bad_pixels_replaces_with_median():
+    # 5x5 array, all 10s except a "bad pixel" of 999 at (2, 2).
+    arr = np.full((5, 5), 10.0, dtype=np.float32)
+    arr[2, 2] = 999.0
+    out = inpaint_bad_pixels(arr, coords=[(2, 2)], radius=1)
+    # 3x3 neighborhood around (2,2) is eight 10s and one 999 → median = 10.
+    assert out[2, 2] == 10.0
+    # Other pixels untouched.
+    assert out[0, 0] == 10.0
+
+
+def test_inpaint_bad_pixels_3d_stack():
+    """Per-frame median across a (N, H, W) stack."""
+    stack = np.zeros((3, 5, 5), dtype=np.float32)
+    for i in range(3):
+        stack[i] = float(i + 1)  # frame i is filled with i+1
+        stack[i, 2, 2] = 999.0    # bad pixel in each
+    out = inpaint_bad_pixels(stack, coords=[(2, 2)])
+    # Each frame's bad pixel takes its own neighborhood median.
+    for i in range(3):
+        assert out[i, 2, 2] == float(i + 1)
+
+
+def test_inpaint_bad_pixels_does_not_mutate_input():
+    arr = np.array([[1.0, 2.0], [3.0, 999.0]], dtype=np.float32)
+    original = arr.copy()
+    _ = inpaint_bad_pixels(arr, coords=[(1, 1)])
+    np.testing.assert_array_equal(arr, original)
+
+
+# ----- apply_intensity_floor ------------------------------------------------
+
+def test_apply_intensity_floor_below_threshold_zeroed():
+    arr = np.array([0.5, 1.0, 1.5, 2.0], dtype=np.float32)
+    out = apply_intensity_floor(arr, threshold=1.5)
+    np.testing.assert_array_equal(
+        out, np.array([0.0, 0.0, 1.5, 2.0], dtype=np.float32)
+    )
+
+
+def test_apply_intensity_floor_does_not_mutate_input():
+    arr = np.array([0.1, 5.0], dtype=np.float32)
+    original = arr.copy()
+    _ = apply_intensity_floor(arr, threshold=1.0)
+    np.testing.assert_array_equal(arr, original)
 
 
 # ----- compute_sample_pixel_size --------------------------------------------
