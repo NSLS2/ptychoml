@@ -13,7 +13,6 @@ from .preprocess import (
     mask_saturated_pixels,
     normalize_intensity,
     resize_diffraction_patterns,
-    rm_outlier_pixels,
     zero_pad_to_target,
 )
 from .trt import (
@@ -38,7 +37,6 @@ __all__ = [
     "mask_saturated_pixels",
     "normalize_intensity",
     "resize_diffraction_patterns",
-    "rm_outlier_pixels",
     "save_engine",
     "zero_pad_to_target",
 ]

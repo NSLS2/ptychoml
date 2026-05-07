@@ -100,7 +100,6 @@ from ptychoml import (
     mask_saturated_pixels,
     normalize_intensity,
     resize_diffraction_patterns,
-    rm_outlier_pixels,
     zero_pad_to_target,
 )
 ```
@@ -148,7 +147,6 @@ Change the spatial extent of frames. Three variants by use case.
 | `apply_intensity_floor(arr, threshold)` | Zero values strictly below `threshold` (noise-floor cutoff). Symmetric to `mask_hot_pixels`. **Mutates in place.** |
 | `mask_saturated_pixels(arr, fill=0.0)` | Replace dtype-max sentinel values (e.g. `65535` for `uint16`) with `fill`. **Mutates in place.** |
 | `inpaint_bad_pixels(arr, coords, radius=1)` | Replace each `(row, col)` in `coords` with the median of a `(2*radius+1)²` neighborhood. **Mutates in place.** |
-| `rm_outlier_pixels(data, rows, cols, set_to_zero=False)` | Variant of `inpaint_bad_pixels` taking parallel `rows`/`cols` arrays and a `set_to_zero` flag. **Mutates in place.** |
 | `find_outlier_pixels(data, tolerance=3, worry_about_edges=True, get_fixed_image=False)` | Auto-detect hot/dead pixels via median-filter difference (`> 10·σ`). Returns coords; optionally also returns a fixed copy. |
 
 ### 4. Intensity & geometric transforms

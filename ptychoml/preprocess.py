@@ -29,12 +29,10 @@ upstream file/function it was lifted from. Four upstreams contribute:
 * HXN h5_conv (offline HDF5-to-HDF5 converter, provided to this PR via a
   one-off ``temp_code`` script — not a public repo).
 
-Some functions are *variants* of each other (e.g. ``rm_outlier_pixels``
-takes parallel ``rows``/``cols`` arrays while ``inpaint_bad_pixels`` takes
-``(K, 2)`` coords; ``estimate_roi`` uses intensity projections while
-``auto_detect_roi_offsets`` uses centre-of-mass). They are kept side-by-
-side for now and will be deduped in a follow-up once call sites are
-unified.
+Some functions are *variants* of each other (e.g. ``estimate_roi`` uses
+intensity projections while ``auto_detect_roi_offsets`` uses
+centre-of-mass). They are kept side-by-side for now and will be deduped
+in a follow-up once call sites are unified.
 
 GPU support
 -----------
@@ -288,7 +286,6 @@ def resize_diffraction_patterns(dp: ArrayLike, target_n: int) -> np.ndarray:
 #         - mask_saturated_pixels:  value == dtype max → fill
 #   (b) Median inpainting at known coords:
 #         - inpaint_bad_pixels:     coords as (K, 2); 3×3 (or larger) median
-#         - rm_outlier_pixels:      parallel rows/cols arrays + zero-fill option
 #   (c) Auto-detection (no caller-supplied coords):
 #         - find_outlier_pixels:    median-filter difference, σ-based threshold
 # All masking ops mutate in place (zero allocation, suitable for streaming).
@@ -375,33 +372,6 @@ def inpaint_bad_pixels(
         window = arr[..., r0:r1, c0:c1]
         arr[..., r, c] = xp.median(window, axis=(-2, -1))
     return arr
-
-
-def rm_outlier_pixels(
-    data: np.ndarray,
-    rows,
-    cols,
-    set_to_zero: bool = False,
-) -> np.ndarray:
-    """Replace outlier pixels at known ``(rows[i], cols[i])`` locations, in place.
-
-    Variant of :func:`inpaint_bad_pixels` that uses parallel ``rows`` and
-    ``cols`` arrays (rather than a ``(K, 2)`` coords array) and offers a
-    ``set_to_zero`` shortcut. Mutates ``data`` and returns it.
-
-    Note: faithfully copied from upstream — the median window is
-    ``data[x-1:x+1, y-1:y+1]`` (a 2×2 upper-left, *not* a 3×3 centered
-    window). This is a minor quirk of the upstream implementation.
-
-    Source: ptycho_gui/nsls2ptycho/core/widgets/imgTools.py ``rm_outlier_pixels``.
-    """
-    if set_to_zero:
-        data[rows, cols] = 0.0
-    else:
-        assert len(rows) == len(cols)
-        for x, y in zip(rows, cols):
-            data[x, y] = np.median(data[x - 1:x + 1, y - 1:y + 1])
-    return data
 
 
 def find_outlier_pixels(

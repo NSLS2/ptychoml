@@ -15,7 +15,6 @@ from ptychoml.preprocess import (
     mask_saturated_pixels,
     normalize_intensity,
     resize_diffraction_patterns,
-    rm_outlier_pixels,
     zero_pad_to_target,
 )
 
@@ -282,24 +281,6 @@ def test_auto_detect_roi_offsets_handles_saturation():
 def test_auto_detect_roi_offsets_zero_frames_returns_origin():
     frames = np.zeros((5, 32, 32), dtype=np.uint16)
     assert auto_detect_roi_offsets(frames, nx=16, ny=16) == (0, 0)
-
-
-# ----- rm_outlier_pixels ----------------------------------------------------
-
-def test_rm_outlier_pixels_set_to_zero():
-    arr = np.array([[1.0, 2.0, 3.0], [4.0, 999.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
-    out = rm_outlier_pixels(arr, rows=[1], cols=[1], set_to_zero=True)
-    assert out is arr  # in-place
-    assert arr[1, 1] == 0.0
-
-
-def test_rm_outlier_pixels_median_replace():
-    arr = np.full((5, 5), 10.0, dtype=np.float32)
-    arr[2, 2] = 999.0
-    out = rm_outlier_pixels(arr, rows=[2], cols=[2])
-    assert out is arr
-    # Upstream uses [x-1:x+1, y-1:y+1] (a 2x2 window of 10s) → median 10.
-    assert arr[2, 2] == 10.0
 
 
 # ----- find_outlier_pixels --------------------------------------------------
