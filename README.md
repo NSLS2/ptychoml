@@ -157,6 +157,39 @@ Change the spatial extent of frames. Three variants by use case.
 | `fourier_shift(images, shifts)` | Sub-pixel shift each `(H, W)` plane by `shifts[i] = (dy, dx)` via FFT phase-ramp multiplication. |
 | `compute_sample_pixel_size(wavelength_m, detector_distance_m, ccd_pixel_size_m, n_pixels)` | Far-field pixel size at the sample plane: `λ z / (N · dx_detector)`. |
 
+### How these map onto holoptycho's pipeline
+
+holoptycho currently runs equivalent inline code rather than importing
+from ptychoml — the helpers above were lifted from those inline copies.
+The map below shows where each one fits in the live streaming flow, so
+you can match a ptychoml function to its real-world call site:
+
+- **Per-frame** (`ImageBatchOp` in `holoptycho/preprocess.py`):
+  `crop_to_roi` for the detector window, then `mask_saturated_pixels`
+  for dtype-max bad-pixel sentinels.
+- **Per-batch** (`ImagePreprocessorOp`): `inpaint_bad_pixels` for known
+  bad-pixel coordinates, `apply_intensity_floor` for the optional noise
+  threshold. The same operator also runs inline `np.rot90`,
+  `np.fft.fftshift`, and `np.sqrt` for orientation and intensity →
+  amplitude conversion (numpy one-liners; not exposed as ptychoml
+  helpers).
+- **Inference** (`vit_inference.py` →
+  `ptychoml.PtychoViTInference.predict`): the diffraction amplitudes
+  produced above are the input to the ViT model.
+- **Post-inference** (`holoptycho/mosaic_stitch.py`): `fourier_shift`
+  places each predicted ViT patch at its sub-pixel scan position when
+  assembling the live mosaic.
+- **Replay scripts** (`holoptycho/scripts/replay_from_tiled.py`):
+  `auto_detect_roi_offsets` picks a sensible default ROI when no
+  user-supplied calibration is available.
+
+The remaining functions in this section
+(`resize_diffraction_patterns`, `mask_hot_pixels`,
+`compute_sample_pixel_size`, `estimate_roi`, `find_outlier_pixels`,
+`zero_pad_to_target`, `normalize_intensity`) come from offline tools
+(HXN h5_conv, ptycho_gui, ptycho-vit training data prep) and aren't
+called by holoptycho today.
+
 ## Run tests
 
 ```bash
