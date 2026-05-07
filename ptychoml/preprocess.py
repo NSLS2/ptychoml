@@ -8,13 +8,16 @@ dependencies.
 Provenance
 ----------
 Each function below has a ``Source:`` line in its docstring naming the
-upstream file/function it was lifted from. Three upstreams contribute:
+upstream file/function it was lifted from. Four upstreams contribute:
 
 * ``holoptycho`` — https://github.com/NSLS2/holoptycho (live streaming
   Holoscan pipeline). Inline array ops have been pulled out of Operator
   ``compute()`` methods into pure functions.
 * ``ptycho_gui`` — https://github.com/NSLS2/ptycho_gui (offline GUI for
   iterative reconstruction). Source files cited as ``ptycho_gui/...``.
+* ``ptycho-vit`` — private PyTorch training repo at ANL. Numpy-only
+  preprocessing methods on the dataset class are lifted; torch ops are
+  skipped since this library is numpy-only.
 * HXN h5_conv (offline HDF5-to-HDF5 converter, provided to this PR via a
   one-off ``temp_code`` script — not a public repo).
 
@@ -518,3 +521,51 @@ def estimate_roi(image: np.ndarray, threshold: float = 0.1) -> Tuple[int, int, i
         h = height - 1
 
     return x0, y0, w, h
+
+
+def zero_pad_to_target(image: np.ndarray, target_size: int) -> np.ndarray:
+    """Zero-pad a 2D image to ``target_size × target_size``, keeping content centered.
+
+    Strict variant of :func:`resize_diffraction_patterns`'s pad branch:
+    raises ``ValueError`` if the input is larger than ``target_size`` on
+    either axis. Returns the input unchanged if already at target;
+    otherwise allocates and returns a new array.
+
+    Source: ptycho-vit ``data.py:_zero_pad_to_target``.
+    """
+    h, w = image.shape
+    if h == target_size and w == target_size:
+        return image
+    if h > target_size or w > target_size:
+        raise ValueError(
+            f"Image size ({h}, {w}) larger than target size ({target_size})"
+        )
+
+    pad_h = target_size - h
+    pad_w = target_size - w
+    pad_top = pad_h // 2
+    pad_bottom = pad_h - pad_top
+    pad_left = pad_w // 2
+    pad_right = pad_w - pad_left
+    return np.pad(
+        image,
+        ((pad_top, pad_bottom), (pad_left, pad_right)),
+        mode="constant",
+        constant_values=0,
+    )
+
+
+def normalize_intensity(
+    arr: np.ndarray,
+    normalization: float,
+    scale: float = 1.0,
+) -> np.ndarray:
+    """Scale ``arr`` by ``scale / normalization``.
+
+    The PtychoViT model is trained with diffraction patterns rescaled by
+    a per-dataset ``(scale / normalization)`` factor; inference callers
+    must apply the same scaling. Returns a new array (does not mutate).
+
+    Source: ptycho-vit ``data.py:PtychographyDataset.normalize``.
+    """
+    return (arr / normalization) * scale

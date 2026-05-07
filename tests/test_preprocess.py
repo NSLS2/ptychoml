@@ -16,8 +16,10 @@ from ptychoml.preprocess import (
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
+    normalize_intensity,
     resize_diffraction_patterns,
     rm_outlier_pixels,
+    zero_pad_to_target,
 )
 
 
@@ -383,6 +385,52 @@ def test_estimate_roi_finds_central_block():
     assert 0 <= y0 < 100
     assert w > 0
     assert h > 0
+
+
+# ----- zero_pad_to_target ---------------------------------------------------
+
+def test_zero_pad_to_target_centers_content():
+    img = np.ones((100, 100), dtype=np.float32) * 7.0
+    out = zero_pad_to_target(img, target_size=256)
+    assert out.shape == (256, 256)
+    py = (256 - 100) // 2
+    px = (256 - 100) // 2
+    np.testing.assert_array_equal(out[py:py + 100, px:px + 100], img)
+    assert out[0, 0] == 0.0
+
+
+def test_zero_pad_to_target_no_op_when_at_target():
+    rng = np.random.default_rng(0)
+    img = rng.random((64, 64), dtype=np.float32)
+    out = zero_pad_to_target(img, target_size=64)
+    assert out is img  # no allocation when already at target
+
+
+def test_zero_pad_to_target_raises_when_larger():
+    img = np.zeros((300, 300), dtype=np.float32)
+    with pytest.raises(ValueError, match="larger than target size"):
+        zero_pad_to_target(img, target_size=256)
+
+
+# ----- normalize_intensity --------------------------------------------------
+
+def test_normalize_intensity_scales_correctly():
+    arr = np.array([2.0, 4.0, 6.0], dtype=np.float64)
+    out = normalize_intensity(arr, normalization=2.0, scale=3.0)
+    np.testing.assert_array_equal(out, np.array([3.0, 6.0, 9.0]))
+
+
+def test_normalize_intensity_default_scale_is_one():
+    arr = np.array([2.0, 4.0], dtype=np.float64)
+    out = normalize_intensity(arr, normalization=2.0)
+    np.testing.assert_array_equal(out, np.array([1.0, 2.0]))
+
+
+def test_normalize_intensity_does_not_mutate():
+    arr = np.array([1.0, 2.0], dtype=np.float64)
+    original = arr.copy()
+    _ = normalize_intensity(arr, normalization=2.0, scale=3.0)
+    np.testing.assert_array_equal(arr, original)
 
 
 # ----- compute_sample_pixel_size --------------------------------------------

@@ -14,8 +14,10 @@ from .preprocess import (
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
+    normalize_intensity,
     resize_diffraction_patterns,
     rm_outlier_pixels,
+    zero_pad_to_target,
 )
 from .trt import (
     build_engine_from_onnx as build_engine,
@@ -40,7 +42,9 @@ __all__ = [
     "inpaint_bad_pixels",
     "load_engine",
     "mask_hot_pixels",
+    "normalize_intensity",
     "resize_diffraction_patterns",
     "rm_outlier_pixels",
     "save_engine",
+    "zero_pad_to_target",
 ]

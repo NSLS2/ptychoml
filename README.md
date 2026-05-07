@@ -101,8 +101,10 @@ from ptychoml import (
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
+    normalize_intensity,
     resize_diffraction_patterns,
     rm_outlier_pixels,
+    zero_pad_to_target,
 )
 ```
 
@@ -123,6 +125,8 @@ follow-up once call sites are unified.
 | `find_outlier_pixels(data, tolerance=3, worry_about_edges=True, get_fixed_image=False)` | Auto-detect hot/dead pixels via median-filter difference (`> 10·σ`). Returns coords; optionally also returns a fixed copy. |
 | `array_ensure_positive_elements(arr)` | Replace zero/negative entries in a 1D array with the closest *following* positive value (reverse iteration). **Mutates in place.** |
 | `estimate_roi(image, threshold=0.1)` | Variant of `auto_detect_roi_offsets` using normalized intensity projections and edge-of-signal detection. Returns `(x0, y0, w, h)`. |
+| `zero_pad_to_target(image, target_size)` | Strict centered zero-pad of a 2D image to `target_size × target_size`; raises if input is larger. |
+| `normalize_intensity(arr, normalization, scale=1.0)` | Scale `arr` by `scale / normalization`. Match the per-dataset normalization the ViT model was trained with. |
 | `apply_intensity_floor(arr, threshold)` | Zero values strictly below `threshold` (noise-floor cutoff). **Mutates in place** and returns `arr`. |
 | `fourier_shift(images, shifts)` | Sub-pixel shift each `(H, W)` plane by `shifts[i] = (dy, dx)` via FFT phase-ramp multiplication. |
 | `apply_angle_correction_x(value, angle_deg)` | Rescale an x-axis quantity by `|cos(angle)|` (when `|angle| ≤ 45°`) or `|sin(angle)|` otherwise. |
