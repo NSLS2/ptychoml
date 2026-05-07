@@ -82,6 +82,26 @@ Additional options:
 
 The output HDF5 file contains a `predictions` dataset with shape `(N, 2, H, W)` or `(N, H, W)` depending on the model. If the input file has a `points` dataset (scan positions), it is copied through to the output.
 
+## Preprocessing utilities
+
+Array-in / array-out helpers for preparing diffraction data and reconstructions before inference. Importable from the top-level package:
+
+```python
+from ptychoml import (
+    resize_diffraction_patterns,
+    adjust_object_for_pad,
+    mask_hot_pixels,
+    compute_sample_pixel_size,
+)
+```
+
+| Function | Purpose |
+|---|---|
+| `resize_diffraction_patterns(dp, target_n)` | Crop each pattern around its per-frame argmax or zero-pad to `target_n × target_n`. Mask hot pixels first if the detector has saturated outliers. |
+| `adjust_object_for_pad(obj, scale_y, scale_x, obj_pad)` | Trim or zero-pad an object's last two axes by `obj_pad * (scale - 1)` after a pixel-grid rescale, to match a backend's fixed padding allocation. |
+| `mask_hot_pixels(arr, threshold, fill=0.0)` | Replace values above `threshold` with `fill` (saturated/dead-pixel masking). Returns a copy. |
+| `compute_sample_pixel_size(wavelength_m, detector_distance_m, ccd_pixel_size_m, n_pixels)` | Far-field pixel size at the sample plane: `λ z / (N · dx_detector)`. |
+
 ## Run tests
 
 ```bash

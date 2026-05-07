@@ -16,6 +16,7 @@ PURE_MODULES = [
     "ptychoml.trt",
     "ptychoml.inference",
     "ptychoml.cli",
+    "ptychoml.preprocess",
 ]
 
 
