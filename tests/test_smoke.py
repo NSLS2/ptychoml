@@ -17,6 +17,7 @@ PURE_MODULES = [
     "ptychoml.inference",
     "ptychoml.cli",
     "ptychoml.preprocess",
+    "ptychoml.orientation",
 ]
 
 
@@ -25,14 +26,53 @@ def test_module_imports(module_name):
     importlib.import_module(module_name)
 
 
-def test_public_api_exposed():
-    """The top-level package re-exports the public API symbols."""
+# The full public API the package promises at the top level. Any symbol
+# listed here must be importable as ``ptychoml.<symbol>``. Update this list
+# when the public API changes — and only when the public API changes; it
+# is the contract.
+PUBLIC_API_SYMBOLS = [
+    # Inference + engine management
+    "PtychoViTInference",
+    "build_engine",
+    "load_engine",
+    "save_engine",
+    # Preprocess pipeline (composed entry point + standalone utilities)
+    "preprocess_diffraction",
+    "compute_intensity_normalization",
+    "normalize_intensity",
+    "mask_hot_pixels",
+    "mask_hot_pixels_by_count",
+    "apply_intensity_floor",
+    "inpaint_bad_pixels",
+    "auto_detect_roi_offsets",
+    "estimate_roi",
+    "crop_to_roi",
+    "detect_dc_at_corner",
+    "zero_pad_to_target",
+    "resize_diffraction_patterns",
+    "fourier_shift",
+    "compute_sample_pixel_size",
+    # Geometry helpers used by the orientation auto-detector
+    "apply_d4",
+    "remap_positions",
+    "D4_NAMES",
+    "D4_TRANSFORMS",
+    # Orientation auto-detection
+    "autodetect_orientation",
+    "OrientationCandidate",
+    "OrientationResult",
+    "OrientationReport",
+]
+
+
+@pytest.mark.parametrize("symbol", PUBLIC_API_SYMBOLS)
+def test_public_api_exposed(symbol):
+    """Every symbol in PUBLIC_API_SYMBOLS is importable as ``ptychoml.<symbol>``."""
     import ptychoml
 
-    assert hasattr(ptychoml, "PtychoViTInference")
-    assert hasattr(ptychoml, "build_engine")
-    assert hasattr(ptychoml, "load_engine")
-    assert hasattr(ptychoml, "save_engine")
+    assert hasattr(ptychoml, symbol), (
+        f"ptychoml.{symbol} is missing — check ptychoml/__init__.py"
+    )
 
 
 def test_cli_help_runs(capsys):
@@ -58,12 +98,21 @@ def test_predict_cli_help_runs(capsys):
 
 
 def test_predict_cli_missing_dataset(tmp_path):
-    """predict_main reports an error when the dataset key is not in the file."""
+    """predict_main reports an error when the dataset key is not in the file.
+
+    Tests the early-exit path: the dataset-present check runs before
+    normalization is computed, before the engine is loaded, and before
+    preprocessing — so the test does not need a TRT engine, a numeric
+    ``--normalization``, or any valid input data.
+    """
     import h5py
     import numpy as np
 
     h5_path = tmp_path / "test.h5"
     with h5py.File(h5_path, "w") as f:
+        # File contains a key that is NOT the requested dataset, and not
+        # the new CLI default ('dp') either — exercises the lookup-failure
+        # branch under either default scheme.
         f.create_dataset("other_key", data=np.zeros((2, 8, 8), dtype=np.float32))
 
     from ptychoml.cli import predict_main
@@ -72,7 +121,7 @@ def test_predict_cli_missing_dataset(tmp_path):
         "--engine", "dummy.engine",
         "--data", str(h5_path),
         "--output", str(tmp_path / "out.h5"),
-        "--dataset", "diffamp",
+        "--dataset", "dp",  # not present in the file
     ])
     assert ret == 1
 
@@ -113,11 +162,11 @@ class TestInferenceInit:
         session = PtychoViTInference(
             engine_path="/nonexistent/model.engine",
             gpu=0,
-            data_is_shifted=False,
+            fftshift=False,
         )
         assert session.engine_path == "/nonexistent/model.engine"
         assert session.gpu == 0
-        assert session._data_is_shifted is False
+        assert session._fftshift is False
         assert session._initialized is False
 
     def test_defaults(self):
@@ -125,7 +174,8 @@ class TestInferenceInit:
 
         session = PtychoViTInference(engine_path="m.engine")
         assert session.gpu == 0
-        assert session._data_is_shifted is False
+        # Default fftshift=None means auto-detect per batch.
+        assert session._fftshift is None
 
     def test_context_manager_cleanup_safe(self):
         """__exit__ should not raise even if predict() was never called."""
@@ -135,3 +185,14 @@ class TestInferenceInit:
             assert session._initialized is False
         # session.cleanup() was called via __exit__; should be idempotent
         session.cleanup()
+
+    def test_baked_probe_defaults_to_none(self):
+        """The baked-probe slot exists and is None until _init_engine runs and
+        finds probe_real / probe_imag outputs on the engine."""
+        from ptychoml import PtychoViTInference
+
+        session = PtychoViTInference(engine_path="m.engine")
+        assert session.baked_probe is None
+        assert session._probe_real_idx is None
+        assert session._probe_imag_idx is None
+        assert session._primary_output_idx == 0
