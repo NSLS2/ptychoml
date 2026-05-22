@@ -39,8 +39,8 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--workspace-size",
         type=int,
-        default=1 << 30,
-        help="TensorRT workspace size in bytes (default: 1 GiB).",
+        default=2 << 30,
+        help="TensorRT workspace size in bytes (default: 2 GiB).",
     )
     args = parser.parse_args(argv)
 
