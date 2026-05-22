@@ -44,10 +44,10 @@ PUBLIC_API_SYMBOLS = [
     "mask_hot_pixels_by_count",
     "apply_intensity_floor",
     "inpaint_bad_pixels",
-    "find_outlier_pixels",
     "auto_detect_roi_offsets",
     "estimate_roi",
     "crop_to_roi",
+    "detect_dc_at_corner",
     "zero_pad_to_target",
     "resize_diffraction_patterns",
     "fourier_shift",
@@ -162,11 +162,11 @@ class TestInferenceInit:
         session = PtychoViTInference(
             engine_path="/nonexistent/model.engine",
             gpu=0,
-            data_is_shifted=False,
+            fftshift=False,
         )
         assert session.engine_path == "/nonexistent/model.engine"
         assert session.gpu == 0
-        assert session._data_is_shifted is False
+        assert session._fftshift is False
         assert session._initialized is False
 
     def test_defaults(self):
@@ -174,7 +174,8 @@ class TestInferenceInit:
 
         session = PtychoViTInference(engine_path="m.engine")
         assert session.gpu == 0
-        assert session._data_is_shifted is False
+        # Default fftshift=None means auto-detect per batch.
+        assert session._fftshift is None
 
     def test_context_manager_cleanup_safe(self):
         """__exit__ should not raise even if predict() was never called."""

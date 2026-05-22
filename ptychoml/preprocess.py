@@ -39,12 +39,11 @@ GPU support
 Functions that only use array methods + slicing + comparisons (the
 in-place mutating ones, ``crop_to_roi``, ``normalize_intensity``) work
 transparently on ``cupy`` arrays because cupy is API-compatible with
-numpy at the method level. ``inpaint_bad_pixels`` and
-``mask_saturated_pixels`` use the small ``_get_xp`` helper to dispatch
-``median`` / ``iinfo`` against the right module. Functions that use
-``scipy.fft`` or ``scipy.ndimage`` (``fourier_shift``,
-``find_outlier_pixels``) remain numpy-only for now — cupy callers can
-move data to host or use the cupy-native equivalents directly.
+numpy at the method level. ``inpaint_bad_pixels`` uses the small
+``_get_xp`` helper to dispatch ``median`` against the right module.
+Functions that use ``scipy.fft`` (``fourier_shift``) remain numpy-only
+for now — cupy callers can move data to host or use the cupy-native
+equivalent directly.
 
 Per-frame argmax centering note
 -------------------------------
@@ -55,13 +54,40 @@ to a detector ROI with ``crop_to_roi``) before calling.
 """
 from __future__ import annotations
 
-from typing import Iterable, Tuple, Union
+from typing import Iterable, Optional, Tuple, Union
 
 import numpy as np
 import scipy.fft
-from scipy.ndimage import median_filter
 
 ArrayLike = Union[np.ndarray, Iterable[np.ndarray]]
+
+
+def detect_dc_at_corner(arr: np.ndarray) -> bool:
+    """Return True if the central beam of ``arr`` sits at the corners.
+
+    A diffraction pattern's central (zero-frequency) beam is by far the
+    brightest feature. We sum intensity in the central half-by-half
+    window and compare against the sum in the four matching corner
+    windows; whichever wins tells us where the central beam currently
+    lives. Returns True when the corners dominate (so the caller should
+    ``fftshift`` to put the central beam at the center).
+
+    ``arr`` may be ``(H, W)`` or ``(N, H, W)``; in the stacked case the
+    mean across the batch is used so a single hot frame can't flip the
+    decision.
+    """
+    a = arr.mean(axis=0) if arr.ndim == 3 else arr
+    a = np.abs(a)
+    H, W = a.shape[-2:]
+    qh, qw = H // 4, W // 4
+    center_sum = float(a[qh:H - qh, qw:W - qw].sum())
+    corner_sum = float(
+        a[:qh, :qw].sum()
+        + a[:qh, W - qw:].sum()
+        + a[H - qh:, :qw].sum()
+        + a[H - qh:, W - qw:].sum()
+    )
+    return corner_sum > center_sum
 
 
 def _get_xp(arr):
@@ -113,6 +139,13 @@ def auto_detect_roi_offsets(
     float32, so callers must now opt in explicitly.
 
     Source: holoptycho/scripts/replay_from_tiled.py ``_auto_batch_offsets``.
+
+    POTENTIAL BUG: returns ``(bx0, by0)`` in (x, y) / (col, row) order,
+    but ``crop_to_roi`` takes ``[[y0, y1], [x0, x1]]`` in (row, col)
+    order. The two ROI helpers in this section therefore disagree on
+    axis order; a caller wiring them together can silently transpose
+    the crop window. Pick one convention and migrate both. Until then,
+    callers must remember to swap when composing the two.
     """
     sample = frames[:min(n_sample, len(frames))].astype(np.float64)
     mean_frame = sample.mean(axis=0)
@@ -147,6 +180,14 @@ def _find_start_end(arr: np.ndarray, threshold_weight: float = 0.3) -> Tuple[int
     """Edge-of-signal indices in a 1D projection.
 
     Source: ptycho_gui/.../imgTools.py ``find_start_end``.
+
+    POTENTIAL BUG: when ``arr`` is constant ``diff`` is all-zero and the
+    ``< threshold_weight * mean(diff)`` test becomes ``0 < 0`` everywhere
+    (all False). ``argmin`` of an all-False array is 0, so ``start = -2``
+    and ``end = len(arr) + 1`` — both out of range. The estimate_roi
+    fallback hides this with a clip, but the function itself returns
+    nonsense on flat inputs. Revisit when we have time to also rework
+    this whole projection-based ROI detector.
     """
     diff = np.abs(arr[:-1] - arr[1:])
     diff = diff < threshold_weight * np.mean(diff)
@@ -166,7 +207,8 @@ def estimate_roi(image: np.ndarray, threshold: float = 0.1) -> Tuple[int, int, i
     Source: ptycho_gui/nsls2ptycho/core/widgets/imgTools.py ``estimate_roi``.
     """
     height, width = image.shape
-    _image = (image - np.min(image)) / np.ptp(image)
+    image_f = image.astype(np.float64, copy=False)
+    _image = (image_f - image_f.min()) / np.ptp(image_f)
 
     proj_x = _project_on_x(_image) / height
     proj_y = _project_on_y(_image) / width
@@ -185,8 +227,8 @@ def estimate_roi(image: np.ndarray, threshold: float = 0.1) -> Tuple[int, int, i
     if w <= 0 or h <= 0:
         x0 = 0
         y0 = 0
-        w = width - 1
-        h = height - 1
+        w = width
+        h = height
 
     return x0, y0, w, h
 
@@ -210,6 +252,14 @@ def crop_to_roi(arr: np.ndarray, roi) -> np.ndarray:
     Works on numpy or cupy arrays (slicing is method-based).
 
     Source: holoptycho/preprocess.py ``ImageBatchOp.compute`` inline crop.
+
+    POTENTIAL BUG: no bounds checking. Negative or out-of-range indices
+    silently produce a wrong-shaped output via numpy slicing semantics
+    (e.g. ``y0=-1`` slices from the last row, an empty range gives an
+    empty axis). Validating against ``arr.shape[-2:]`` and raising on
+    invalid ROIs would catch caller mistakes loudly instead of feeding
+    a malformed array downstream. Also see the axis-order mismatch
+    flagged on ``auto_detect_roi_offsets``.
     """
     roi = np.asarray(roi)
     y0, y1 = int(roi[0, 0]), int(roi[0, 1])
@@ -263,6 +313,26 @@ def resize_diffraction_patterns(dp: ArrayLike, target_n: int) -> np.ndarray:
     ``(N, target_n, target_n)``.
 
     Source: HXN h5_conv ``_resize_dp`` (provided via temp_code).
+
+    POTENTIAL BUG (per-frame argmax centering): the crop window is
+    centered on each frame's argmax independently. A single saturated
+    or hot pixel anywhere off-center can therefore swing the window
+    for that one frame, breaking inter-frame alignment and changing
+    where the central beam lands relative to the model's expected
+    frame. Mask hot pixels first (``mask_hot_pixels``) or pre-crop to
+    a detector ROI (``crop_to_roi``) — and consider replacing the
+    argmax with a COM (``auto_detect_roi_offsets``-style) batch
+    estimate so every frame in a scan gets the same window.
+
+    POTENTIAL BUG (mixed-axis crop+pad): when one axis is over
+    ``target_n`` and the other is under, the crop branch runs only
+    along the over-sized axis (the under-sized axis is sliced by its
+    own argmax range — which can clip valid signal at the edge),
+    then the pad branch enlarges the under-sized axis back to
+    ``target_n``. The under-sized axis is not really "cropped"
+    deliberately, just sliced by happenstance. Result is shaped
+    correctly but the content can lose data near the edges. Rare in
+    practice (square detectors), but worth a real fix.
     """
     resized = []
     for pattern in dp:
@@ -285,14 +355,13 @@ def resize_diffraction_patterns(dp: ArrayLike, target_n: int) -> np.ndarray:
 # ============================================================================
 # 3. Bad-pixel masking, inpainting & threshold cleanup
 # ----------------------------------------------------------------------------
-# Three sub-styles share this section:
+# Two sub-styles share this section:
 #   (a) Threshold-based masks (single-pass, value test):
 #         - mask_hot_pixels:        value > threshold → fill
+#         - mask_hot_pixels_by_count: photon-count threshold w/ amp/int kind
 #         - apply_intensity_floor:  value < threshold → 0    (symmetric)
 #   (b) Median inpainting at known coords:
 #         - inpaint_bad_pixels:     coords as (K, 2); 3×3 (or larger) median
-#   (c) Auto-detection (no caller-supplied coords):
-#         - find_outlier_pixels:    median-filter difference, σ-based threshold
 # All masking ops mutate in place (zero allocation, suitable for streaming).
 # ============================================================================
 
@@ -397,80 +466,6 @@ def inpaint_bad_pixels(
     return arr
 
 
-def find_outlier_pixels(
-    data: np.ndarray,
-    tolerance: int = 3,
-    worry_about_edges: bool = True,
-    get_fixed_image: bool = False,
-):
-    """Detect hot/dead pixels in a 2D array via median-filter difference.
-
-    Returns ``hot_pixels`` (a ``(2, K)`` array of ``[rows, cols]``). When
-    ``get_fixed_image=True``, also returns a copy of ``data`` with the
-    detected pixels replaced by the median-filtered value, including
-    edge / corner cases when ``worry_about_edges=True``.
-
-    Note: faithfully copied — the ``tolerance`` parameter is currently
-    unused upstream (the threshold is hard-coded to ``10*std(diff)``).
-    Kept in the signature for compatibility.
-
-    Source: ptycho_gui/nsls2ptycho/core/widgets/imgTools.py ``find_outlier_pixels``.
-    """
-    data = data.astype(float)
-    blurred = median_filter(data, size=2)
-    difference = data - blurred
-    threshold = 10 * np.std(difference)
-
-    hot_pixels = np.nonzero(np.abs(difference[1:-1, 1:-1]) > threshold)
-    hot_pixels = np.array(hot_pixels) + 1
-
-    if get_fixed_image:
-        fixed_image = np.copy(data)
-        for y, x in zip(hot_pixels[0], hot_pixels[1]):
-            fixed_image[y, x] = blurred[y, x]
-
-        if worry_about_edges:
-            height, width = np.shape(data)
-
-            for index in range(1, height - 1):
-                med = np.median(data[index - 1:index + 2, 0:2])
-                if np.abs(data[index, 0] - med) > threshold:
-                    hot_pixels = np.hstack((hot_pixels, [[index], [0]]))
-                    fixed_image[index, 0] = med
-
-                med = np.median(data[index - 1:index + 2, -2:])
-                if np.abs(data[index, -1] - med) > threshold:
-                    hot_pixels = np.hstack((hot_pixels, [[index], [width - 1]]))
-                    fixed_image[index, -1] = med
-
-            for index in range(1, width - 1):
-                med = np.median(data[0:2, index - 1:index + 2])
-                if np.abs(data[0, index] - med) > threshold:
-                    hot_pixels = np.hstack((hot_pixels, [[0], [index]]))
-                    fixed_image[0, index] = med
-
-                med = np.median(data[-2:, index - 1:index + 2])
-                if np.abs(data[-1, index] - med) > threshold:
-                    hot_pixels = np.hstack((hot_pixels, [[height - 1], [index]]))
-                    fixed_image[-1, index] = med
-
-            for (cy, cx, py, px) in (
-                (0, 0, slice(0, 2), slice(0, 2)),
-                (0, -1, slice(0, 2), slice(-2, None)),
-                (-1, 0, slice(-2, None), slice(0, 2)),
-                (-1, -1, slice(-2, None), slice(-2, None)),
-            ):
-                med = np.median(data[py, px])
-                if np.abs(data[cy, cx] - med) > threshold:
-                    row = height - 1 if cy == -1 else 0
-                    col = width - 1 if cx == -1 else 0
-                    hot_pixels = np.hstack((hot_pixels, [[row], [col]]))
-                    fixed_image[cy, cx] = med
-
-        return hot_pixels, fixed_image
-    return hot_pixels
-
-
 # ============================================================================
 # 4. Intensity & geometric transforms
 # ----------------------------------------------------------------------------
@@ -484,15 +479,18 @@ def find_outlier_pixels(
 def normalize_intensity(
     arr: np.ndarray,
     normalization: float,
-    scale: float = 1.0,
+    scale: float = 10000.0,
 ) -> np.ndarray:
     """Scale ``arr`` by ``scale / normalization``.
 
     The PtychoViT model is trained with diffraction patterns rescaled by
     a per-dataset ``(scale / normalization)`` factor where
     ``normalization`` is the max intensity across all DPs in the scan
-    (with hot pixels excluded). Inference callers must apply the same
-    scaling. Returns a new array (does not mutate).
+    (with hot pixels excluded) and ``scale`` is the global factor from
+    ptycho-vit's ``config.yaml`` (10000.0). Inference callers must
+    apply the same scaling; passing a different value silently produces
+    inputs at the wrong magnitude and the model output is meaningless.
+    Returns a new array (does not mutate).
 
     See ``compute_intensity_normalization`` for the canonical way to
     derive the ``normalization`` value from a DP stack.
@@ -674,11 +672,9 @@ def preprocess_diffraction(
     *,
     normalization: float,
     scale: float = 10000.0,
-    hot_pixel_count_threshold: float | None = None,
-    bad_pixel_coords=None,
-    bad_pixel_inpaint_radius: int = 1,
+    hot_pixel_count_threshold: Optional[float] = 50000.0,
     dp_orient: str = 'identity',
-    fftshift: bool = False,
+    fftshift: Optional[bool] = None,
     out_dtype=np.float32,
 ) -> np.ndarray:
     """Convert raw detector intensity to a model-ready diffraction amplitude.
@@ -686,15 +682,15 @@ def preprocess_diffraction(
     Composes the ptycho-vit training-time preprocessing on a batch of raw
     detector frames. Steps run in this order:
 
-      1. ``inpaint_bad_pixels`` (if ``bad_pixel_coords`` is given)
-      2. ``mask_hot_pixels_by_count`` (intensity-domain comparison)
-      3. ``(intensity / normalization) * scale``  (matches training scale)
-      4. ``sqrt`` (intensity → amplitude)
-      5. ``apply_d4`` (rotate/flip the detector frame into the model frame)
-      6. ``fftshift`` on the last two axes (optional)
+      1. ``mask_hot_pixels_by_count`` (intensity-domain comparison)
+      2. ``(intensity / normalization) * scale``  (matches training scale)
+      3. ``sqrt`` (intensity → amplitude)
+      4. ``apply_d4`` (rotate/flip the detector frame into the model frame)
+      5. ``fftshift`` on the last two axes (auto-detected by default —
+         applied iff the central beam currently sits at the corners)
 
-    The first two steps mutate a working copy so the caller's input is not
-    modified. Steps 3–6 allocate a new float array of ``out_dtype``.
+    Step 1 mutates a working copy so the caller's input is not modified.
+    Steps 2–5 allocate a new float array of ``out_dtype``.
 
     Args:
         intensity:                  Raw detector counts, shape ``(..., H, W)``.
@@ -711,15 +707,17 @@ def preprocess_diffraction(
                                     (offline / CLI). In streaming mode where
                                     it is not, take the value from the scan
                                     config and pass it in.
-        scale:                      Global scale factor (10000.0 in
-                                    ptycho-vit's default config).
+        scale:                      Global scale factor (10000.0 — matches
+                                    ptycho-vit's ``config.yaml``). The
+                                    PtychographyDataset class-level default
+                                    in ptycho-vit is 100000.0, but every
+                                    HXN config overrides to 10000.0.
         hot_pixel_count_threshold:  Photon-count threshold; pixels strictly
                                     above this are zeroed before rescaling.
-                                    ``None`` disables the filter.
-        bad_pixel_coords:           Optional ``(K, 2)`` array of known bad
-                                    ``(row, col)`` locations to median-fill
-                                    before the hot-pixel mask runs.
-        bad_pixel_inpaint_radius:   Window radius for the median fill.
+                                    Default 50000.0 matches hxn_to_vit's
+                                    conversion default. Set ``None`` to
+                                    disable (e.g. when data is already
+                                    filtered upstream).
         dp_orient:                  D4 transform name (see ``D4_NAMES``)
                                     that rotates/flips the detector frame
                                     into the orientation the ViT model
@@ -727,12 +725,14 @@ def preprocess_diffraction(
                                     Pick by hand from a known config, or
                                     let the orientation auto-detector pick
                                     one and pass the winning name here.
-        fftshift:                   If True, apply ``np.fft.fftshift`` on
-                                    the last two axes after the D4
-                                    transform. Off by default because the
-                                    right DC convention is caller- and
-                                    model-specific; pick the one that
-                                    matches your training data.
+        fftshift:                   Tri-state DC-convention control:
+                                      * ``None`` (default): auto-detect via
+                                        ``detect_dc_at_corner`` — applies
+                                        fftshift iff the central beam is
+                                        currently at the corners. The model
+                                        always sees central-beam-at-center.
+                                      * ``True``: force fftshift.
+                                      * ``False``: skip fftshift.
         out_dtype:                  Output dtype. Default ``float32``,
                                     matching the ONNX/TRT engine's expected
                                     input dtype.
@@ -747,11 +747,6 @@ def preprocess_diffraction(
     """
     working = np.asarray(intensity).copy()
 
-    if bad_pixel_coords is not None and len(np.asarray(bad_pixel_coords)) > 0:
-        inpaint_bad_pixels(
-            working, bad_pixel_coords, radius=bad_pixel_inpaint_radius,
-        )
-
     if hot_pixel_count_threshold is not None:
         mask_hot_pixels_by_count(
             working, hot_pixel_count_threshold, kind="intensity",
@@ -764,7 +759,8 @@ def preprocess_diffraction(
     if dp_orient != 'identity':
         amplitude = apply_d4(amplitude, dp_orient)
 
-    if fftshift:
+    do_shift = detect_dc_at_corner(amplitude) if fftshift is None else bool(fftshift)
+    if do_shift:
         amplitude = np.fft.fftshift(amplitude, axes=(-2, -1))
 
     return np.ascontiguousarray(amplitude)

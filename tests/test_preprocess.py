@@ -9,8 +9,8 @@ from ptychoml.preprocess import (
     compute_intensity_normalization,
     compute_sample_pixel_size,
     crop_to_roi,
+    detect_dc_at_corner,
     estimate_roi,
-    find_outlier_pixels,
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
@@ -266,27 +266,6 @@ def test_auto_detect_roi_offsets_zero_frames_returns_origin():
     assert auto_detect_roi_offsets(frames, nx=16, ny=16) == (0, 0)
 
 
-# ----- find_outlier_pixels --------------------------------------------------
-
-def test_find_outlier_pixels_detects_injected_hot_pixel():
-    rng = np.random.default_rng(42)
-    img = rng.normal(loc=100.0, scale=1.0, size=(20, 20))
-    img[8, 12] = 5000.0  # injected hot pixel
-    coords = find_outlier_pixels(img, get_fixed_image=False)
-    # coords is shape (2, K); should contain (8, 12).
-    found = list(zip(coords[0], coords[1]))
-    assert (8, 12) in found
-
-
-def test_find_outlier_pixels_returns_fixed_image():
-    rng = np.random.default_rng(0)
-    img = rng.normal(loc=100.0, scale=1.0, size=(15, 15))
-    img[7, 7] = 5000.0
-    _, fixed = find_outlier_pixels(img, get_fixed_image=True, worry_about_edges=False)
-    # The hot pixel should be replaced with something near the local mean.
-    assert abs(fixed[7, 7] - 100.0) < 10.0
-
-
 # ----- estimate_roi ---------------------------------------------------------
 
 def test_estimate_roi_finds_central_block():
@@ -333,10 +312,13 @@ def test_normalize_intensity_scales_correctly():
     np.testing.assert_array_equal(out, np.array([3.0, 6.0, 9.0]))
 
 
-def test_normalize_intensity_default_scale_is_one():
+def test_normalize_intensity_default_scale_matches_config():
+    # Default scale is 10000.0 — matches ptycho-vit config.yaml. Calling
+    # without scale=... must reproduce the training-time amplitude
+    # magnitude or the model receives the wrong dynamic range.
     arr = np.array([2.0, 4.0], dtype=np.float64)
     out = normalize_intensity(arr, normalization=2.0)
-    np.testing.assert_array_equal(out, np.array([1.0, 2.0]))
+    np.testing.assert_array_equal(out, np.array([10000.0, 20000.0]))
 
 
 def test_normalize_intensity_does_not_mutate():
@@ -515,7 +497,10 @@ def test_preprocess_diffraction_basic_pipeline_produces_sqrt_of_scaled_intensity
     intensity = np.array(
         [[[100.0, 400.0], [10000.0, 1.0]]], dtype=np.float32
     )
-    out = preprocess_diffraction(intensity, normalization=10.0, scale=1.0)
+    out = preprocess_diffraction(
+        intensity, normalization=10.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=False,
+    )
     # sqrt(I / 10) with no hot-pixel mask, no D4, no fftshift.
     expected = np.sqrt(intensity / 10.0).astype(np.float32)
     np.testing.assert_allclose(out, expected, rtol=1e-5)
@@ -527,7 +512,7 @@ def test_preprocess_diffraction_hot_pixel_zeroed_before_sqrt():
     )
     out = preprocess_diffraction(
         intensity, normalization=1.0, scale=1.0,
-        hot_pixel_count_threshold=1000.0,
+        hot_pixel_count_threshold=1000.0, fftshift=False,
     )
     # Pixel above the count threshold is zeroed (in the intensity domain)
     # so its sqrt is also zero.
@@ -536,25 +521,17 @@ def test_preprocess_diffraction_hot_pixel_zeroed_before_sqrt():
     assert out[0, 0, 0] == pytest.approx(10.0)
 
 
-def test_preprocess_diffraction_bad_pixel_coords_get_inpainted():
-    intensity = np.full((1, 5, 5), 10.0, dtype=np.float32)
-    intensity[0, 2, 2] = 999.0
-    out = preprocess_diffraction(
-        intensity, normalization=1.0, scale=1.0,
-        bad_pixel_coords=np.array([[2, 2]]),
-        bad_pixel_inpaint_radius=1,
-    )
-    # The bad pixel's 3x3 neighborhood is eight 10s and one 999 →
-    # median = 10 → sqrt(10) after normalization.
-    assert out[0, 2, 2] == pytest.approx(np.sqrt(10.0))
-
-
 def test_preprocess_diffraction_dp_orient_composes_with_pipeline():
     rng = np.random.default_rng(0)
     intensity = rng.uniform(10, 100, size=(2, 8, 8)).astype(np.float32)
-    baseline = preprocess_diffraction(intensity, normalization=1.0, scale=1.0)
+    baseline = preprocess_diffraction(
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=False,
+    )
     rotated = preprocess_diffraction(
-        intensity, normalization=1.0, scale=1.0, dp_orient='rot90_cw',
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=False,
+        dp_orient='rot90_cw',
     )
     np.testing.assert_allclose(
         rotated,
@@ -567,14 +544,46 @@ def test_preprocess_diffraction_fftshift_toggle_round_trips():
     rng = np.random.default_rng(1)
     intensity = rng.uniform(10, 100, size=(2, 8, 8)).astype(np.float32)
     no_shift = preprocess_diffraction(
-        intensity, normalization=1.0, scale=1.0, fftshift=False,
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=False,
     )
     with_shift = preprocess_diffraction(
-        intensity, normalization=1.0, scale=1.0, fftshift=True,
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=True,
     )
     np.testing.assert_array_equal(
         with_shift, np.fft.fftshift(no_shift, axes=(-2, -1))
     )
+
+
+def test_preprocess_diffraction_fftshift_auto_centers_dc_at_corner_input():
+    # Synthetic intensity with the central beam at the corners — the
+    # auto-detector should fftshift it back to the center.
+    intensity = np.zeros((1, 16, 16), dtype=np.float32)
+    intensity[0, 0, 0] = 1e6
+    intensity[0, 0, -1] = 1e6
+    intensity[0, -1, 0] = 1e6
+    intensity[0, -1, -1] = 1e6
+    out = preprocess_diffraction(
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=None,
+    )
+    # After auto-fftshift the bright pixels land at the center.
+    assert out[0, 8, 8] > 0
+    assert out[0, 0, 0] == 0
+    assert out[0, -1, -1] == 0
+
+
+def test_preprocess_diffraction_fftshift_auto_leaves_dc_at_center_alone():
+    # Bright central beam already at center — auto should not shift.
+    intensity = np.zeros((1, 16, 16), dtype=np.float32)
+    intensity[0, 8, 8] = 1e6
+    out = preprocess_diffraction(
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=None,
+    )
+    assert out[0, 8, 8] > 0
+    assert out[0, 0, 0] == 0
 
 
 def test_preprocess_diffraction_does_not_mutate_input():
@@ -582,14 +591,36 @@ def test_preprocess_diffraction_does_not_mutate_input():
     original = intensity.copy()
     _ = preprocess_diffraction(
         intensity, normalization=10.0, scale=2.0,
-        hot_pixel_count_threshold=150.0,
-        bad_pixel_coords=np.array([[0, 0]]),
+        hot_pixel_count_threshold=150.0, fftshift=False,
     )
     np.testing.assert_array_equal(intensity, original)
 
 
 def test_preprocess_diffraction_returns_c_contiguous_float32():
     intensity = np.ones((2, 8, 8), dtype=np.uint32)
-    out = preprocess_diffraction(intensity, normalization=1.0, scale=1.0)
+    out = preprocess_diffraction(
+        intensity, normalization=1.0, scale=1.0,
+        hot_pixel_count_threshold=None, fftshift=False,
+    )
     assert out.dtype == np.float32
     assert out.flags['C_CONTIGUOUS']
+
+
+# ----- detect_dc_at_corner --------------------------------------------------
+
+def test_detect_dc_at_corner_true_when_corners_dominate():
+    img = np.zeros((16, 16), dtype=np.float32)
+    img[0, 0] = img[0, -1] = img[-1, 0] = img[-1, -1] = 1000.0
+    assert detect_dc_at_corner(img) is True
+
+
+def test_detect_dc_at_corner_false_when_center_dominates():
+    img = np.zeros((16, 16), dtype=np.float32)
+    img[8, 8] = 1000.0
+    assert detect_dc_at_corner(img) is False
+
+
+def test_detect_dc_at_corner_works_on_batched_input():
+    stack = np.zeros((3, 16, 16), dtype=np.float32)
+    stack[:, 8, 8] = 1000.0
+    assert detect_dc_at_corner(stack) is False

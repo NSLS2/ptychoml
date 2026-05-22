@@ -64,7 +64,7 @@ def predict_main(argv=None) -> int:
         intensity → preprocess_diffraction(
             normalization, scale,
             hot_pixel_count_threshold,
-            dp_orient, fftshift,
+            dp_orient, fftshift={auto,on,off},
         ) → PtychoViTInference.predict
 
     Pass the same scaler/orient settings the live pipeline used; comparing
@@ -130,8 +130,9 @@ def predict_main(argv=None) -> int:
     parser.add_argument(
         "--hot-pixel-count-threshold",
         type=float,
-        default=None,
-        help="Photon-count threshold for hot-pixel zeroing. Omit to disable.",
+        default=50000.0,
+        help="Photon-count threshold for hot-pixel zeroing (default 50000.0, "
+             "matches hxn_to_vit). Pass a non-finite value (e.g. inf) to disable.",
     )
     parser.add_argument(
         "--dp-orient",
@@ -142,22 +143,20 @@ def predict_main(argv=None) -> int:
     )
     parser.add_argument(
         "--fftshift",
-        action="store_true",
-        help="Apply np.fft.fftshift on the last two axes after the D4 transform. "
-             "Off by default.",
+        choices=("auto", "on", "off"),
+        default="auto",
+        help="DC-convention control for the model input. 'auto' (default) "
+             "detects whether the central beam is at the corners and applies "
+             "np.fft.fftshift iff it is; 'on' forces a shift; 'off' skips it. "
+             "The model is trained with the central beam at the center of the "
+             "frame; 'auto' is correct for both hxn_to_vit dp.hdf5 (already "
+             "centered) and raw /diffamp (centered at corner).",
     )
     parser.add_argument(
         "--gpu",
         type=int,
         default=0,
         help="CUDA device ordinal (default: 0).",
-    )
-    parser.add_argument(
-        "--shifted",
-        action="store_true",
-        help="Forwarded to PtychoViTInference(data_is_shifted=...) — the session will "
-             "apply its own fftshift before running the engine. Independent of --fftshift "
-             "above; set whichever combination produces the same input the model was trained on.",
     )
     args = parser.parse_args(argv)
 
@@ -208,14 +207,14 @@ def predict_main(argv=None) -> int:
     else:
         normalization = args.normalization
 
+    fftshift_choice = {'auto': None, 'on': True, 'off': False}[args.fftshift]
     diff_amp = preprocess_diffraction(
         intensity,
         normalization=normalization,
         scale=args.scale,
         hot_pixel_count_threshold=args.hot_pixel_count_threshold,
-        bad_pixel_coords=None,
         dp_orient=args.dp_orient,
-        fftshift=args.fftshift,
+        fftshift=fftshift_choice,
     )
     print(
         f"After preprocess_diffraction: shape={diff_amp.shape}, dtype={diff_amp.dtype}, "
@@ -225,7 +224,7 @@ def predict_main(argv=None) -> int:
     with PtychoViTInference(
         engine_path=args.engine,
         gpu=args.gpu,
-        data_is_shifted=args.shifted,
+        fftshift=False,  # preprocess_diffraction above already centered DC
     ) as session:
         session._init_engine()
         batch_size = session.expected_input_shape[0]

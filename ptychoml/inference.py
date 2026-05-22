@@ -11,6 +11,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from .preprocess import detect_dc_at_corner
 from .trt import load_engine, allocate_io_buffers, infer, reshape_output_flat
 
 logger = logging.getLogger(__name__)
@@ -35,22 +36,31 @@ class PtychoViTInference:
         self,
         engine_path: str,
         gpu: int = 0,
-        data_is_shifted: bool = False,
+        fftshift: Optional[bool] = None,
     ):
         """
         Args:
-            engine_path:     Path to a TensorRT .engine file (built from ONNX).
-            gpu:             CUDA device ordinal (default 0).
-            data_is_shifted: If True, input diffraction patterns have been
-                             fftshift'd by the caller and need to be unshifted
-                             before inference (the model expects DC at the
-                             corner). Set True in live mode where upstream
-                             preprocessing applies fftshift; False when the
-                             caller provides raw diffraction amplitudes.
+            engine_path: Path to a TensorRT .engine file (built from ONNX).
+            gpu:         CUDA device ordinal (default 0).
+            fftshift:    DC-convention control for inputs to ``predict``.
+                         The model is trained with the central beam at
+                         the center of the frame; this flag controls how
+                         to land each call's input there:
+                           * ``None`` (default): auto-detect via
+                             ``detect_dc_at_corner`` per batch — apply
+                             fftshift iff the central beam is currently
+                             at the corners.
+                           * ``True``: force fftshift on every batch.
+                           * ``False``: skip fftshift on every batch.
+                         If the caller already ran
+                         ``preprocess_diffraction`` (which itself
+                         auto-centers by default), leave this as ``None``
+                         — the second pass will detect DC-at-center and
+                         no-op.
         """
         self.engine_path = engine_path
         self.gpu = int(gpu)
-        self._data_is_shifted = bool(data_is_shifted)
+        self._fftshift = fftshift if fftshift is None else bool(fftshift)
 
         # Lazy-initialized on first predict()
         self._initialized = False
@@ -182,9 +192,18 @@ class PtychoViTInference:
         if not self._initialized:
             self._init_engine()
 
-        # Model was trained on unshifted diffraction amplitudes (DC at corners).
-        # For even-sized arrays, fftshift == ifftshift.
-        if self._data_is_shifted:
+        # Model was trained with the central beam at the center of the
+        # frame (hxn_to_vit applies fftshift on /diffamp before writing
+        # the training dp.hdf5; the dataset class then loads + sqrts
+        # without further shifting). Auto-detect the input convention by
+        # default and apply fftshift only when the central beam is at
+        # the corners. For even-sized arrays, fftshift == ifftshift, so
+        # one application is enough either way.
+        if self._fftshift is None:
+            do_shift = detect_dc_at_corner(diff_amp)
+        else:
+            do_shift = self._fftshift
+        if do_shift:
             diff_amp = np.fft.fftshift(diff_amp, axes=(1, 2))
 
         B_actual = diff_amp.shape[0]
