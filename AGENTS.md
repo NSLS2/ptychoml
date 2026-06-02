@@ -1,0 +1,97 @@
+# ptychoml Agent Notes
+
+## Project overview
+
+Neural network inference library for ptychography using PtychoViT (Vision
+Transformer) models exported to TensorRT. Wraps the preprocessing,
+orientation detection, and TRT inference steps that were previously
+scattered across `ptycho-vit`, `holoptycho`, and `ptycho_gui`.
+
+## Running tests
+
+The pixi environment is Linux-only (`linux-64`). Do not attempt to add
+macOS platforms — the `gpu` environment pulls CUDA packages that have no
+macOS builds and will fail to solve.
+
+Run tests on a Linux machine with:
+
+```
+pixi run test                        # default env (needs GPU for TRT)
+pixi run --environment ci-py312 test # CPU-only, no GPU required
+pixi run --environment ci-py313 test # CPU-only, no GPU required
+```
+
+All tests in `tests/` are pure numpy — none require a GPU or a real
+`.engine` file. GPU/TRT tests do not exist yet.
+
+## Codebase notes
+
+### `ptychoml/preprocess.py`
+
+The composed pipeline entry point is `preprocess_diffraction`. It runs in
+this order: hot-pixel mask → normalize+scale → sqrt → D4 → fftshift.
+
+**Known issues flagged in docstrings (not yet fixed):**
+- `crop_to_roi`: no bounds checking on ROI indices
+- `resize_diffraction_patterns`: per-frame argmax centering can be misled
+  by hot pixels; mixed-axis crop+pad can lose edge data
+- `auto_detect_roi_offsets` and `crop_to_roi` use opposite axis-order
+  conventions (x,y vs y,x) — composing them silently transposes the crop
+
+**Streaming compatibility:**
+- `preprocess_diffraction` with `fftshift=None` (auto-detect) must not be
+  used mid-scan. The DC convention should be determined once (from the
+  first batch or from scan config) and then locked in as `fftshift=True`
+  or `fftshift=False` for the rest of the scan.
+- `compute_intensity_normalization` requires the full DP stack — not
+  streaming-safe. In streaming mode, pass `normalization` from scan config.
+
+**Breaking change in PR #8 (merged):**
+- `normalize_intensity` default `scale` changed from `1.0` → `10000.0` to
+  match ptycho-vit `config.yaml`. Any caller not passing `scale=` explicitly
+  gets 10000× larger output than before.
+
+### `ptychoml/orientation.py`
+
+`autodetect_orientation` sweeps all 8 D4 transforms and scores each using
+`_score_forward_consistency` (forward-physics NCC). Lower score = better.
+
+**Known bug:** `apply_fftshift` in the scorer is derived from
+`bool(preprocess_kwargs.get('fftshift', False))`. If `fftshift=None`
+(auto-detect) is passed, `bool(None) == False` — the scorer always assumes
+no fftshift regardless of what `preprocess_diffraction` actually applied.
+This degrades all scores equally so ranking still works, but absolute
+scores are wrong. Documented in `test_scorer_fftshift_none_treated_as_false`.
+
+### `ptychoml/trt.py`
+
+Default TRT workspace size is 2 GiB (doubled in PR #8). Error message on
+build failure now suggests increasing `--workspace-size`.
+
+## Test coverage gaps (tracked, not yet fixed)
+
+Listed in priority order from the PR #8 review:
+
+1. **`preprocess_diffraction` pipeline order** — no test verifies hot-pixel
+   mask runs before sqrt, or D4 before fftshift, with values that would
+   distinguish the wrong order.
+2. **`fftshift=None` streaming warning** — no guard or warning in
+   `preprocess_diffraction` that auto-detect should not be used mid-scan.
+3. **`compute_intensity_normalization` boundary** — `<=` vs `<` at the
+   threshold value is untested.
+4. **`remap_positions` + `apply_d4` composition** — no test combining
+   sign-flip and swap to verify the application order matches the
+   orientation auto-detector's expectations.
+5. **`apply_d4` group structure** — only self-inverse and rot90 pair are
+   tested. Composition identities (e.g. `fliplr ∘ rot90_cw = antitranspose`)
+   are not verified.
+
+## PR history
+
+- **PR #8** (`20260522_fixes`, merged): Added `preprocess_diffraction`
+  composed pipeline, `mask_hot_pixels_by_count`,
+  `compute_intensity_normalization`, `detect_dc_at_corner`, D4 geometry
+  helpers, `orientation.py` with `autodetect_orientation`, doubled TRT
+  workspace default. Removed `find_outlier_pixels`.
+- **PR #9** (`test-scorer`, open): Unit tests for `_score_forward_consistency`
+  and strengthened `autodetect_orientation` end-to-end tests.
