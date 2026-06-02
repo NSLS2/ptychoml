@@ -56,19 +56,15 @@ this order: hot-pixel mask → normalize+scale → sqrt → D4 → fftshift.
 `autodetect_orientation` sweeps all 8 D4 transforms and scores each using
 `_score_forward_consistency` (forward-physics NCC). Lower score = better.
 
-**Do not pass `fftshift=None` in `preprocess_kwargs` to `autodetect_orientation`.**
-The scorer derives `apply_fftshift` from
-`bool(preprocess_kwargs.get('fftshift', False))`. `bool(None) == False`, so
-the scorer always assumes no fftshift regardless of what
-`preprocess_diffraction` actually applied. This degrades all scores equally
-so ranking still works, but absolute scores are wrong. Always pass an
-explicit `fftshift=True` or `fftshift=False` when calling
-`autodetect_orientation`.
-
 **`autodetect_orientation` is not streaming-safe.** It holds the full
 `intensity_batch` in RAM and runs 8× inference passes. Use it once on a
 representative subset at the start of a scan, then lock in the winning
 `dp_orient` for the rest.
+
+**`fftshift=None` in `preprocess_kwargs` is safe to pass** — `autodetect_orientation`
+will resolve the DC convention once from the batch via `detect_dc_at_corner`
+and lock it in for the entire sweep. Pass an explicit `fftshift=True` or
+`fftshift=False` if you already know the convention.
 
 ### `ptychoml/trt.py`
 

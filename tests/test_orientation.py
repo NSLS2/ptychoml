@@ -190,30 +190,6 @@ def test_scorer_apply_fftshift_true_matches_shifted_measured():
     assert score_wrong > 0.05
 
 
-def test_scorer_fftshift_none_in_preprocess_kwargs_treated_as_false():
-    """autodetect_orientation converts fftshift=None to apply_fftshift=False
-    via bool(None). When the data has DC at corner this silently degrades
-    all candidate scores equally (ranking still works, absolute scores are
-    wrong). This test documents the known behaviour so a future fix is
-    noticed immediately.
-
-    If the behaviour is intentionally changed to handle None differently,
-    update this test.
-    """
-    rng = np.random.default_rng(6)
-    probe, amp, phase, i_sim = _make_forward_physics(rng)
-    measured_corner = i_sim  # DC at corner, no shift
-
-    # bool(None) == False, so this should behave identically to False.
-    score_none = _score_forward_consistency(
-        amp, phase, probe, measured_corner, apply_fftshift=bool(None),
-    )
-    score_false = _score_forward_consistency(
-        amp, phase, probe, measured_corner, apply_fftshift=False,
-    )
-    assert score_none == pytest.approx(score_false, abs=1e-8)
-
-
 # ----- end-to-end recovery via forward consistency --------------------------
 
 def test_autodetect_orientation_recovers_truth_dp_orient(
@@ -321,6 +297,54 @@ def test_autodetect_orientation_restricting_candidate_list_reduces_search_space(
         dp_orient_candidates=['identity', 'rot90_cw'],
     )
     assert len(report.ranked) == 2
+
+
+def test_autodetect_orientation_fftshift_none_resolved_from_batch(null_session):
+    """fftshift=None in preprocess_kwargs is resolved once from the batch
+    before the sweep — not left as None for the scorer to mishandle.
+
+    We build intensity with DC at the corners (fftshift needed). Passing
+    fftshift=None should produce the same report as fftshift=True because
+    auto-detect on this batch returns True. If the bug were still present
+    (bool(None)==False), the scorer would use the wrong DC convention and
+    the two reports would differ.
+    """
+    from ptychoml import autodetect_orientation
+    from ptychoml.preprocess import detect_dc_at_corner
+
+    # Intensity with a strong DC component at the corners.
+    rng = np.random.default_rng(7)
+    intensity = rng.uniform(0, 1, size=(2, 8, 8)).astype(np.float32)
+    intensity[:, 0, 0] = 1e6
+    intensity[:, 0, -1] = 1e6
+    intensity[:, -1, 0] = 1e6
+    intensity[:, -1, -1] = 1e6
+    assert detect_dc_at_corner(intensity) is True  # confirm the setup
+
+    positions = np.array([[0.0, 0.0], [0.1, 0.1]])
+    probe = np.ones((8, 8), dtype=np.complex64)
+
+    report_none = autodetect_orientation(
+        intensity, positions, session=null_session, probe=probe,
+        preprocess_kwargs=dict(
+            normalization=1.0, scale=1.0,
+            hot_pixel_count_threshold=None, fftshift=None,
+        ),
+        dp_orient_candidates=['identity', 'rot90_cw'],
+    )
+    report_true = autodetect_orientation(
+        intensity, positions, session=null_session, probe=probe,
+        preprocess_kwargs=dict(
+            normalization=1.0, scale=1.0,
+            hot_pixel_count_threshold=None, fftshift=True,
+        ),
+        dp_orient_candidates=['identity', 'rot90_cw'],
+    )
+
+    # Scores should be identical because fftshift=None resolved to True.
+    for r_none, r_true in zip(report_none.ranked, report_true.ranked):
+        assert r_none.candidate.dp_orient == r_true.candidate.dp_orient
+        assert r_none.score == pytest.approx(r_true.score, abs=1e-6)
 
 
 # ----- scorer drives the ranking --------------------------------------------
