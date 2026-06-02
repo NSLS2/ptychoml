@@ -184,7 +184,23 @@ def autodetect_orientation(
         else D4_NAMES
     )
     amp_channel_index = 1 - phase_channel_index
-    apply_fftshift = bool(preprocess_kwargs.get('fftshift', False))
+
+    # Resolve fftshift=None (auto-detect) once from the batch before the
+    # sweep so that preprocess_diffraction and the scorer use the same DC
+    # convention for every candidate. If left as None, preprocess_diffraction
+    # would re-detect per candidate (harmless but wasteful), while the scorer
+    # would receive bool(None)==False regardless — causing a DC mismatch when
+    # the data actually needs fftshift.
+    fftshift_setting = preprocess_kwargs.get('fftshift', False)
+    if fftshift_setting is None:
+        from .preprocess import detect_dc_at_corner
+        resolved_fftshift = detect_dc_at_corner(intensity_batch)
+        logger.info(
+            "autodetect_orientation: fftshift=None — auto-detected %s from batch",
+            resolved_fftshift,
+        )
+        preprocess_kwargs = {**preprocess_kwargs, 'fftshift': resolved_fftshift}
+    apply_fftshift = bool(preprocess_kwargs['fftshift'])
     logger.info(
         "autodetect_orientation: sweep=%d dp_orient candidates on N=%d frames",
         len(dp_orients), intensity_batch.shape[0],
