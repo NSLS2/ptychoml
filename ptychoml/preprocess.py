@@ -624,6 +624,15 @@ def remap_positions(
     transpose must be applied consistently to detector data and scan
     positions for the forward model to be self-consistent.
 
+    **Convention note:** when ``swap_xy=True``, the sign ``sx`` is applied
+    to the output x column (which holds the original y values after the
+    swap), and ``sy`` is applied to the output y column (original x). In
+    other words, signs are applied *after* the swap, to the output columns,
+    not to the input columns before swapping. This matches
+    ``hxn_to_vit.py:POSITION_MAPS`` but is easy to get wrong — if in doubt,
+    verify with a known (x, y) → expected output pair before wiring into a
+    pipeline.
+
     Source: ptycho-vit ``scripts/hxn_to_vit.py:POSITION_MAPS``.
     """
     sx, sy = signs

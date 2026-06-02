@@ -52,6 +52,13 @@ this order: hot-pixel mask → normalize+scale → sqrt → D4 → fftshift.
   pass `scale=` explicitly if you are unsure — relying on the default
   silently produces inputs at the wrong magnitude if the default ever changes.
 
+**`remap_positions` sign convention:**
+- When `swap_xy=True`, signs are applied to the *output* columns after the
+  swap, not the input columns before. So `signs=(sx, sy)` with `swap_xy=True`
+  means `sx` scales what was originally y, and `sy` scales what was originally
+  x. This matches `hxn_to_vit.py:POSITION_MAPS` but is easy to get wrong —
+  verify with a known input/output pair before wiring into a pipeline.
+
 ### `ptychoml/orientation.py`
 
 `autodetect_orientation` sweeps all 8 D4 transforms and scores each using
