@@ -42,7 +42,8 @@ this order: hot-pixel mask → normalize+scale → sqrt → D4 → fftshift.
 - `preprocess_diffraction` with `fftshift=None` (auto-detect) must not be
   used mid-scan. The DC convention should be determined once (from the
   first batch or from scan config) and then locked in as `fftshift=True`
-  or `fftshift=False` for the rest of the scan.
+  or `fftshift=False` for the rest of the scan. This is documented in the
+  `fftshift` parameter docstring.
 - `compute_intensity_normalization` requires the full DP stack — not
   streaming-safe. In streaming mode, pass `normalization` from scan config.
 

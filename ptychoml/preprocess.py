@@ -733,6 +733,18 @@ def preprocess_diffraction(
                                         always sees central-beam-at-center.
                                       * ``True``: force fftshift.
                                       * ``False``: skip fftshift.
+
+                                    **Streaming warning:** do not use
+                                    ``fftshift=None`` mid-scan. The DC
+                                    convention must be consistent across
+                                    all batches — determine it once from
+                                    the first batch or from scan config,
+                                    then pass ``True`` or ``False``
+                                    explicitly for the rest of the scan.
+                                    A frame with an unusual intensity
+                                    distribution could flip the
+                                    auto-detect decision and silently
+                                    shift some batches but not others.
         out_dtype:                  Output dtype. Default ``float32``,
                                     matching the ONNX/TRT engine's expected
                                     input dtype.
