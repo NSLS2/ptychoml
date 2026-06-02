@@ -191,10 +191,17 @@ holoptycho today.
 ## Run tests
 
 ```bash
-pixi run test
+pixi run test                         # default (gpu) env — installs CUDA + TensorRT
+pixi run --environment ci-py312 test  # CPU-only, no GPU/CUDA required
+pixi run --environment ci-py313 test  # CPU-only, no GPU/CUDA required
 ```
 
-Tests run without GPU/TRT (via `pytest.importorskip` gates).
+The test code itself runs without a GPU or a real `.engine` file (GPU/TRT
+paths are gated by `pytest.importorskip`). Note, however, that the
+`default` environment still pulls CUDA + TensorRT at install time because
+it bundles the `gpu` feature. On a machine without an NVIDIA GPU/CUDA
+driver, use the `ci-py312` / `ci-py313` environments to run the suite
+without installing the GPU stack.
 
 ## Related repos
 

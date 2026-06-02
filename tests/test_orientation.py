@@ -63,11 +63,23 @@ def test_scorer_perfect_match_returns_zero():
 
 
 def test_scorer_analytical_ncc_value():
-    """Score = 1 - NCC; verify against a hand-computed NCC on small arrays.
+    """Score = 1 - NCC against a fully hand-computed, non-trivial NCC.
 
     Uses a trivial probe (all ones) and a single frame of constant
-    amplitude=1, phase=0 so fft2(probe * ψ) = fft2(ones) which has a
-    known closed form: only the DC bin is nonzero (= N²).
+    amplitude=1, phase=0 so the scorer's internal wavefront is fft2(ones),
+    which has a closed form: only the DC bin is nonzero. For a 4x4 patch
+    ``fft2(ones)`` has DC value N²=16, so ``i_sim`` is 16²=256 at [0,0] and
+    0 everywhere else.
+
+    Scoring that against ``measured = ones`` (16 ones) gives a known NCC
+    that exercises the actual 1-NCC arithmetic, not just the degenerate
+    perfect-match → 0 case:
+
+        num  = Σ i_sim·measured = 256·1               = 256
+        |i_sim|   = √(256²)                            = 256
+        |measured| = √(16·1²)                          = 4
+        NCC  = 256 / (256·4)                           = 0.25
+        score = 1 - NCC                                = 0.75
     """
     patch_size = 4
     n_frames = 1
@@ -75,13 +87,40 @@ def test_scorer_analytical_ncc_value():
     amp = np.ones((n_frames, patch_size, patch_size), dtype=np.float32)
     phase = np.zeros((n_frames, patch_size, patch_size), dtype=np.float32)
 
-    # fft2(ones * ones * exp(0)) = fft2(ones); only DC bin = N² = 16.
-    fft = np.fft.fft2(probe[None] * amp.astype(np.complex64), axes=(-2, -1))
-    i_sim = (fft.real ** 2 + fft.imag ** 2).astype(np.float32)
-    measured = i_sim.copy()  # perfect match
+    # i_sim is DC-only (256 at [0,0]); score it against a uniform measured.
+    measured = np.ones((n_frames, patch_size, patch_size), dtype=np.float32)
 
     score = _score_forward_consistency(amp, phase, probe, measured, apply_fftshift=False)
-    assert score == pytest.approx(0.0, abs=1e-6)
+    assert score == pytest.approx(0.75, abs=1e-6)
+
+
+@pytest.mark.parametrize("k", [1e-3, 0.5, 7.0, 1e6])
+def test_scorer_is_invariant_to_measured_scale(k):
+    """A positive global scale on ``measured`` must not change the score.
+
+    This guards the property ``autodetect_orientation`` relies on but never
+    sets up explicitly: it feeds ``measured = diff_amp**2`` to the scorer,
+    which still carries the global ``(scale / normalization)`` factor from
+    ``preprocess_diffraction`` (default ``scale=10000``), while ``i_sim`` is
+    built from the model's amplitude-scale patches and carries no such
+    factor. NCC normalises both vectors, so the constant cancels — the
+    comment at orientation.py "NCC absorbs it" depends on exactly this.
+
+    A regression to a non-normalised metric (e.g. MSE) would still pass
+    every other scorer test (they all build ``measured`` at the same scale
+    as ``i_sim``) but would silently break real inference. This is the test
+    that fails first if that invariance is ever lost.
+    """
+    rng = np.random.default_rng(6)
+    probe, amp, phase, i_sim = _make_forward_physics(rng)
+
+    score_unit = _score_forward_consistency(
+        amp, phase, probe, i_sim, apply_fftshift=False,
+    )
+    score_scaled = _score_forward_consistency(
+        amp, phase, probe, (i_sim * k).astype(np.float32), apply_fftshift=False,
+    )
+    assert score_scaled == pytest.approx(score_unit, abs=1e-6)
 
 
 def test_scorer_shuffled_patches_increases_score():
@@ -119,7 +158,7 @@ def test_scorer_wrong_probe_increases_score():
     assert score_wrong > score_correct + 0.05
 
 
-def test_scorer_phase_negation_does_not_change_score():
+def test_scorer_phase_negation_changes_score():
     """|fft2(probe * amp * exp(iφ))|² == |fft2(probe * amp * exp(-iφ))|²
     is NOT generally true, so negating all phases should change the score
     (unless the probe and patches are symmetric). This test verifies the
