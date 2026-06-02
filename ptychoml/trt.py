@@ -116,7 +116,7 @@ def build_engine_from_onnx(
     *,
     fp16: bool = False,
     tf32: bool = True,
-    max_workspace_size_bytes: int = 1 << 30,
+    max_workspace_size_bytes: int = 2 << 30,
 ):
     """Build a TensorRT engine from an ONNX model."""
     import tensorrt as trt
@@ -164,7 +164,11 @@ def build_engine_from_onnx(
     if engine is None and hasattr(builder, "build_serialized_network"):
         serialized = builder.build_serialized_network(network, config)
         if serialized is None:
-            raise RuntimeError("TensorRT failed to build a serialized network.")
+            raise RuntimeError(
+                "TensorRT failed to build a serialized network. "
+                "A common cause is insufficient workspace memory for tactic selection; "
+                "try increasing --workspace-size (for example 2147483648 or larger)."
+            )
         runtime = trt.Runtime(logger)
         engine = runtime.deserialize_cuda_engine(serialized)
     if engine is None:

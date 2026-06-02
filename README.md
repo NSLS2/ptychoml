@@ -92,8 +92,8 @@ from ptychoml import (
     auto_detect_roi_offsets,
     compute_sample_pixel_size,
     crop_to_roi,
+    detect_dc_at_corner,
     estimate_roi,
-    find_outlier_pixels,
     fourier_shift,
     inpaint_bad_pixels,
     mask_hot_pixels,
@@ -111,8 +111,7 @@ will be deduped in a follow-up once call sites are unified.
 **GPU support:** the in-place mutating functions (`mask_hot_pixels`,
 `apply_intensity_floor`), `crop_to_roi`, `normalize_intensity`, and
 `inpaint_bad_pixels` work transparently on `cupy` arrays. Functions
-that use `scipy.fft` / `scipy.ndimage` (`fourier_shift`,
-`find_outlier_pixels`) remain numpy-only for now.
+that use `scipy.fft` (`fourier_shift`) remain numpy-only for now.
 
 Functions are grouped into four families so variants can be evaluated
 side-by-side. The same grouping is used in
@@ -143,15 +142,16 @@ Change the spatial extent of frames. Three variants by use case.
 | Function | Purpose |
 |---|---|
 | `mask_hot_pixels(arr, threshold, fill=0.0)` | Replace values above `threshold` with `fill`. **Mutates in place** and returns `arr`. |
+| `mask_hot_pixels_by_count(arr, count_threshold, kind)` | Photon-count threshold variant; pass `kind='amplitude'` to apply `sqrt(count_threshold)` instead. **Mutates in place.** Used inside `preprocess_diffraction`. |
 | `apply_intensity_floor(arr, threshold)` | Zero values strictly below `threshold` (noise-floor cutoff). Symmetric to `mask_hot_pixels`. **Mutates in place.** |
-| `inpaint_bad_pixels(arr, coords, radius=1)` | Replace each `(row, col)` in `coords` with the median of a `(2*radius+1)²` neighborhood. **Mutates in place.** |
-| `find_outlier_pixels(data, tolerance=3, worry_about_edges=True, get_fixed_image=False)` | Auto-detect hot/dead pixels via median-filter difference (`> 10·σ`). Returns coords; optionally also returns a fixed copy. |
+| `inpaint_bad_pixels(arr, coords, radius=1)` | Replace each `(row, col)` in `coords` with the median of a `(2*radius+1)²` neighborhood. **Mutates in place.** Available for holoptycho-style live streaming with known bad-pixel maps; not part of `preprocess_diffraction`. |
 
 ### 4. Intensity & geometric transforms
 
 | Function | Purpose |
 |---|---|
-| `normalize_intensity(arr, normalization, scale=1.0)` | Scale `arr` by `scale / normalization`. Match the per-dataset normalization the ViT model was trained with. |
+| `normalize_intensity(arr, normalization, scale=10000.0)` | Scale `arr` by `scale / normalization`. Default `scale` matches ptycho-vit's `config.yaml`; the dataset class default in ptycho-vit (100000.0) is overridden by every HXN config to 10000.0. |
+| `detect_dc_at_corner(arr)` | Return True if the central beam currently sits at the corners (i.e. an `fftshift` is needed to land it at the center). Used internally by `preprocess_diffraction` and `PtychoViTInference.predict` for auto DC-convention detection. |
 | `fourier_shift(images, shifts)` | Sub-pixel shift each `(H, W)` plane by `shifts[i] = (dy, dx)` via FFT phase-ramp multiplication. |
 | `compute_sample_pixel_size(wavelength_m, detector_distance_m, ccd_pixel_size_m, n_pixels)` | Far-field pixel size at the sample plane: `λ z / (N · dx_detector)`. |
 
@@ -183,10 +183,10 @@ you can match a ptychoml function to its real-world call site:
 
 The remaining functions in this section
 (`resize_diffraction_patterns`, `mask_hot_pixels`,
-`compute_sample_pixel_size`, `estimate_roi`, `find_outlier_pixels`,
-`zero_pad_to_target`, `normalize_intensity`) come from offline tools
-(HXN h5_conv, ptycho_gui, ptycho-vit training data prep) and aren't
-called by holoptycho today.
+`compute_sample_pixel_size`, `estimate_roi`, `zero_pad_to_target`,
+`normalize_intensity`) come from offline tools (HXN h5_conv,
+ptycho_gui, ptycho-vit training data prep) and aren't called by
+holoptycho today.
 
 ## Run tests
 
