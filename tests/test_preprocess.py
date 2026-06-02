@@ -416,6 +416,15 @@ def test_compute_intensity_normalization_raises_when_all_above_threshold():
         compute_intensity_normalization(arr, hot_pixel_count_threshold=0.5)
 
 
+def test_compute_intensity_normalization_pixel_at_threshold_is_included():
+    # A pixel exactly equal to the threshold is NOT a hot pixel (condition
+    # is > threshold, not >= threshold), so it must be included in the max.
+    # Pins the <= boundary in the mask so a change to < would be caught.
+    arr = np.array([50000.0, 1.0], dtype=np.float32)
+    n = compute_intensity_normalization(arr, hot_pixel_count_threshold=50000.0)
+    assert n == 50000.0
+
+
 # ----- apply_d4 -------------------------------------------------------------
 
 def test_apply_d4_identity_is_noop():
