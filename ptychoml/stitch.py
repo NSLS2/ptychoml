@@ -25,6 +25,28 @@ Both ``canvas`` and ``counts`` accumulate in place; the displayed/written
 mosaic is ``canvas / np.maximum(counts, 1)``. No normalization happens
 here — the caller decides the min-overlap threshold.
 
+Streaming safety
+----------------
+All three strategies are streaming-safe: each patch is placed using only
+its own value and position, and ``counts``/``canvas`` accumulate
+incrementally with **no batch-global reduction**. Because normalization is
+deferred to the caller, per-batch stitching produces the same mosaic as
+one-shot stitching of every patch — independent of how frames are chunked
+into batches. (Contrast ``autodetect_orientation`` / ``fftshift=None``,
+which resolve a convention from a representative batch and are *not*
+streaming-safe.)
+
+Two caveats when looping over batches:
+
+* ``stitch_batch_nearest`` and ``stitch_batch_livestitch_into`` are
+  **bit-exact** regardless of batching. The Fourier-shift path
+  (``place_patches_fourier_shift`` / ``stitch_batch_into``) is associative
+  only **up to FFT round-off** — same mosaic, not bit-identical.
+* The nearest paths mutate ``canvas``/``counts`` in place, but the
+  Fourier path **reallocates** the canvas when a patch straddles the edge
+  (it pads then crops back). Always use the **returned** arrays rather
+  than relying on in-place mutation.
+
 Implemented in numpy (not torch): the algorithm is FFT + scatter-add +
 divide, no autograd needed, which keeps inference containers light.
 
@@ -202,7 +224,10 @@ def stitch_batch_into(
     (y, x), pointing at the patch centers.
 
     Scatter-add is associative, so per-batch accumulation gives the same
-    result (up to FFT noise) as one-shot stitching of all patches.
+    result (up to FFT noise) as one-shot stitching of all patches —
+    streaming-safe, but not bit-exact across different batchings. The
+    returned ``canvas`` may be a fresh array (the placement reallocates on
+    edge straddle), so always use the return value.
 
     Source: holoptycho/mosaic_stitch.py ``stitch_batch_into``.
     """

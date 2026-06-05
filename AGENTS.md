@@ -95,3 +95,12 @@ Fourier-shift and livestitch paths flip each patch up-down before
 placement; `stitch_batch_nearest` does not. All edge handling clamps to
 the canvas (no wrap-around). Pure numpy + `scipy.fft`; depends only on
 `fourier_shift` from `preprocess.py`.
+
+**All three are streaming-safe** — per-patch placement with no
+batch-global reduction, so per-batch stitching equals one-shot stitching
+regardless of how frames are chunked. Two gotchas in a streaming loop:
+the nearest and livestitch paths are bit-exact across batchings while the
+Fourier path is associative only up to FFT round-off; and the Fourier
+path may **reallocate** the canvas on edge straddle, so always assign from
+the return value (`canvas, counts = stitch_batch_into(...)`) rather than
+relying on in-place mutation.
