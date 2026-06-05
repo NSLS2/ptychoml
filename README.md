@@ -155,6 +155,26 @@ Change the spatial extent of frames. Three variants by use case.
 | `fourier_shift(images, shifts)` | Sub-pixel shift each `(H, W)` plane by `shifts[i] = (dy, dx)` via FFT phase-ramp multiplication. |
 | `compute_sample_pixel_size(wavelength_m, detector_distance_m, ccd_pixel_size_m, n_pixels)` | Far-field pixel size at the sample plane: `λ z / (N · dx_detector)`. |
 
+## Stitching (`ptychoml.stitch`)
+
+Patch-placement helpers that accumulate a batch of reconstructed ViT
+patches into a running `(canvas, counts)` mosaic. Both arrays accumulate
+in place; the displayed/written mosaic is `canvas / np.maximum(counts, 1)`
+(no normalization happens inside these functions — the caller picks the
+min-overlap threshold). `positions_px` is `(N, 2)` in canvas pixel
+coordinates `(y, x)` pointing at patch centers.
+
+| Function | Purpose |
+|---|---|
+| `place_patches_fourier_shift(image, positions, patches, pad=1)` | Add patches into `image` with sub-pixel Fourier shifts: over-extract by `pad`, phase-ramp shift by the fractional position, center-crop, scatter-add. Highest placement accuracy. |
+| `stitch_batch_into(canvas, counts, patches, positions_px, *, pad=1)` | Accumulate one batch into `(canvas, counts)` using the Fourier-shift path. Scatter-add is associative, so per-batch accumulation matches one-shot stitching (up to FFT noise). |
+| `stitch_batch_livestitch_into(canvas, counts, patches, positions_px)` | Nearest-integer accumulation that also returns the `(y0, y1, x0, x1)` bounding box touched this batch — lets a live writer repaint only the changed sub-rectangle. Returns `(0, 0, 0, 0)` when nothing overlapped. |
+| `stitch_batch_nearest(canvas, counts, patches, positions_px)` | Plain nearest-integer scatter-add; clamps at canvas edges (no wrap). Simplest variant, handy as a JIT/cache warm-up kernel. |
+
+The Fourier-shift and livestitch paths flip each patch up-down before
+placement (matching the ptycho-vit convention); `stitch_batch_nearest`
+does not.
+
 ### How these map onto holoptycho's pipeline
 
 holoptycho currently runs equivalent inline code rather than importing
@@ -174,9 +194,11 @@ you can match a ptychoml function to its real-world call site:
 - **Inference** (`vit_inference.py` →
   `ptychoml.PtychoViTInference.predict`): the diffraction amplitudes
   produced above are the input to the ViT model.
-- **Post-inference** (`holoptycho/mosaic_stitch.py`): `fourier_shift`
-  places each predicted ViT patch at its sub-pixel scan position when
-  assembling the live mosaic.
+- **Post-inference** (`holoptycho/mosaic_stitch.py`): the
+  `ptychoml.stitch` helpers (`stitch_batch_into` /
+  `stitch_batch_livestitch_into` / `stitch_batch_nearest`, built on
+  `fourier_shift`) place each predicted ViT patch at its scan position
+  when assembling the live mosaic.
 - **Replay scripts** (`holoptycho/scripts/replay_from_tiled.py`):
   `auto_detect_roi_offsets` picks a sensible default ROI when no
   user-supplied calibration is available.

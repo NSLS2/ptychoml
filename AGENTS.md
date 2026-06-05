@@ -79,3 +79,19 @@ and lock it in for the entire sweep. Pass an explicit `fftshift=True` or
 Default TRT workspace size is 2 GiB. If engine build fails with a
 serialization error, increase `--workspace-size` (e.g. `4294967296` for
 4 GiB).
+
+### `ptychoml/stitch.py`
+
+Patch-placement / mosaic helpers lifted verbatim from
+`holoptycho/mosaic_stitch.py` so holoptycho can re-export them under the
+original names (zero behavior change). Three strategies:
+`place_patches_fourier_shift` / `stitch_batch_into` (sub-pixel Fourier
+shift), `stitch_batch_livestitch_into` (nearest-integer + touched bbox),
+and `stitch_batch_nearest` (plain nearest-integer, edge-clamped).
+
+`canvas` and `counts` accumulate **in place**; callers normalize as
+`canvas / np.maximum(counts, 1)` — these functions never normalize. The
+Fourier-shift and livestitch paths flip each patch up-down before
+placement; `stitch_batch_nearest` does not. All edge handling clamps to
+the canvas (no wrap-around). Pure numpy + `scipy.fft`; depends only on
+`fourier_shift` from `preprocess.py`.
