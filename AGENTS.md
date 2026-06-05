@@ -79,3 +79,38 @@ and lock it in for the entire sweep. Pass an explicit `fftshift=True` or
 Default TRT workspace size is 2 GiB. If engine build fails with a
 serialization error, increase `--workspace-size` (e.g. `4294967296` for
 4 GiB).
+
+### `ptychoml/stitch.py`
+
+Patch-placement / mosaic helpers lifted verbatim from
+`holoptycho/mosaic_stitch.py` so holoptycho can re-export them under the
+original names (zero behavior change). Three strategies:
+`place_patches_fourier_shift` / `stitch_batch_into` (sub-pixel Fourier
+shift), `stitch_batch_livestitch_into` (nearest-integer + touched bbox),
+and `stitch_batch_nearest` (plain nearest-integer, edge-clamped).
+
+`canvas` and `counts` accumulate **in place**; callers normalize as
+`canvas / np.maximum(counts, 1)` — these functions never normalize. The
+Fourier-shift and livestitch paths flip each patch up-down before
+placement; `stitch_batch_nearest` does not. All edge handling clamps to
+the canvas (no wrap-around). Pure numpy + `scipy.fft`; depends only on
+`fourier_shift` from `preprocess.py`.
+
+**Known gotcha — the three strategies are not pixel-interchangeable**
+(behavior inherited verbatim from holoptycho). `place_patches_fourier_shift`
+and `stitch_batch_livestitch_into` flip each patch up-down before placement;
+`stitch_batch_nearest` does not. They also use different center-rounding
+(`floor(pos-(ph-1)/2)`, `rint(pos-ph/2)`, and `pos-ph//2` respectively), so a
+footprint can shift ~1px between them. Their `counts` agree but placed values
+don't. In holoptycho this is harmless because each method has a distinct role
+(livestitch = live accumulation, nearest = JIT warm-up only); as a library,
+callers must pick one strategy per mosaic and not mix them.
+
+**All three are streaming-safe** — per-patch placement with no
+batch-global reduction, so per-batch stitching equals one-shot stitching
+regardless of how frames are chunked. Two gotchas in a streaming loop:
+the nearest and livestitch paths are bit-exact across batchings while the
+Fourier path is associative only up to FFT round-off; and the Fourier
+path may **reallocate** the canvas on edge straddle, so always assign from
+the return value (`canvas, counts = stitch_batch_into(...)`) rather than
+relying on in-place mutation.

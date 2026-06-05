@@ -27,6 +27,12 @@ from .preprocess import (
     resize_diffraction_patterns,
     zero_pad_to_target,
 )
+from .stitch import (
+    place_patches_fourier_shift,
+    stitch_batch_into,
+    stitch_batch_livestitch_into,
+    stitch_batch_nearest,
+)
 from .trt import (
     build_engine_from_onnx as build_engine,
     load_engine,
@@ -56,9 +62,13 @@ __all__ = [
     "mask_hot_pixels",
     "mask_hot_pixels_by_count",
     "normalize_intensity",
+    "place_patches_fourier_shift",
     "preprocess_diffraction",
     "remap_positions",
     "resize_diffraction_patterns",
     "save_engine",
+    "stitch_batch_into",
+    "stitch_batch_livestitch_into",
+    "stitch_batch_nearest",
     "zero_pad_to_target",
 ]
