@@ -171,9 +171,13 @@ coordinates `(y, x)` pointing at patch centers.
 | `stitch_batch_livestitch_into(canvas, counts, patches, positions_px)` | Nearest-integer accumulation that also returns the `(y0, y1, x0, x1)` bounding box touched this batch — lets a live writer repaint only the changed sub-rectangle. Returns `(0, 0, 0, 0)` when nothing overlapped. |
 | `stitch_batch_nearest(canvas, counts, patches, positions_px)` | Plain nearest-integer scatter-add; clamps at canvas edges (no wrap). Simplest variant, handy as a JIT/cache warm-up kernel. |
 
-The Fourier-shift and livestitch paths flip each patch up-down before
-placement (matching the ptycho-vit convention); `stitch_batch_nearest`
-does not.
+**The three strategies are not pixel-interchangeable.** The Fourier-shift
+and livestitch paths flip each patch up-down before placement (matching
+the ptycho-vit convention) while `stitch_batch_nearest` does not, and the
+three use slightly different center-rounding conventions (so a patch
+footprint can shift by ~1px between them). Their *occupancy* (`counts`)
+agrees, but the placed *values* do not — pick one strategy for a given
+mosaic and stay with it rather than mixing them.
 
 `patches` is always `(B, ph, pw)` — a single patch must be passed as
 `(1, ph, pw)`, not a bare 2-D array. The functions return the
@@ -207,11 +211,13 @@ canvas, counts, _ = stitch_batch_livestitch_into(canvas, counts, all_patches, al
 mosaic = canvas / np.maximum(counts, 1)
 ```
 
-Swap in `stitch_batch_into` (drop the bbox return) for sub-pixel
-Fourier-shift accuracy, or `stitch_batch_nearest` for the simplest
-integer placement. Normalization (`canvas / np.maximum(counts, 1)`) is
-always the caller's responsibility — apply a `min_overlap` mask there if
-you want to hide thinly-covered pixels.
+For sub-pixel accuracy use `stitch_batch_into` (drop the bbox return);
+`stitch_batch_nearest` is the simplest integer placement (no flip — handy
+as a warm-up kernel). These are not drop-in substitutes for each other
+(see the flip / center-rounding note above), so choose one per mosaic.
+Normalization (`canvas / np.maximum(counts, 1)`) is always the caller's
+responsibility — apply a `min_overlap` mask there if you want to hide
+thinly-covered pixels.
 
 ### How these map onto holoptycho's pipeline
 

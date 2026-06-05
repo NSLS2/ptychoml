@@ -96,6 +96,16 @@ placement; `stitch_batch_nearest` does not. All edge handling clamps to
 the canvas (no wrap-around). Pure numpy + `scipy.fft`; depends only on
 `fourier_shift` from `preprocess.py`.
 
+**Known gotcha — the three strategies are not pixel-interchangeable**
+(behavior inherited verbatim from holoptycho). `place_patches_fourier_shift`
+and `stitch_batch_livestitch_into` flip each patch up-down before placement;
+`stitch_batch_nearest` does not. They also use different center-rounding
+(`floor(pos-(ph-1)/2)`, `rint(pos-ph/2)`, and `pos-ph//2` respectively), so a
+footprint can shift ~1px between them. Their `counts` agree but placed values
+don't. In holoptycho this is harmless because each method has a distinct role
+(livestitch = live accumulation, nearest = JIT warm-up only); as a library,
+callers must pick one strategy per mosaic and not mix them.
+
 **All three are streaming-safe** — per-patch placement with no
 batch-global reduction, so per-batch stitching equals one-shot stitching
 regardless of how frames are chunked. Two gotchas in a streaming loop:

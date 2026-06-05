@@ -142,10 +142,11 @@ def test_stitch_into_counts_footprint_odd_patch():
     np.testing.assert_allclose(canvas[8:13, 8:13], 1.0, atol=1e-4)
 
 
-def test_stitch_into_matches_nearest_on_integer_odd_positions():
-    """Fourier-shift path (pad=0, odd patch, integer positions, zero fractional)
-    places identically to the nearest-integer path."""
-    rng = np.random.default_rng(0)
+def test_fourier_and_nearest_share_counts_footprint():
+    """Fourier-shift (pad=0, odd patch, integer positions) and nearest place
+    over the *same* occupancy footprint, so their counts arrays match. (The
+    canvas *values* differ — see test_methods_differ_by_updown_flip — so this
+    asserts counts only, not canvas.)"""
     pos = np.array([[10.0, 12.0], [18.0, 9.0], [14.0, 20.0]])
     patches = np.ones((len(pos), 5, 5), dtype=np.float32)
 
@@ -157,8 +158,37 @@ def test_stitch_into_matches_nearest_on_integer_odd_positions():
     nn = np.zeros((30, 30), dtype=np.float32)
     cn, nn = stitch_batch_nearest(cn, nn, patches.copy(), pos)
 
-    np.testing.assert_allclose(cf, cn, atol=1e-4)
     np.testing.assert_array_equal(nf, nn)
+    # all-ones patch is flip-symmetric, so the *values* also coincide here
+    np.testing.assert_allclose(cf, cn, atol=1e-4)
+
+
+def test_methods_differ_by_updown_flip():
+    """The three strategies are NOT pixel-interchangeable: nearest places the
+    patch as-is, while the Fourier and livestitch paths flip it up-down (and
+    use slightly different center-rounding). Verified with a non-symmetric
+    patch whose only non-zero row is the top one."""
+    patch = np.zeros((5, 5), dtype=np.float32)
+    patch[0, :] = 9.0  # top-row marker
+    pos = np.array([[15.0, 15.0]])
+
+    def marker_row(fn, *, livestitch=False, **kw):
+        canvas = np.zeros((30, 30), dtype=np.float32)
+        counts = np.zeros((30, 30), dtype=np.float32)
+        out = fn(canvas, counts, patch[None].copy(), pos, **kw)
+        canvas = out[0]
+        return int(np.argwhere(canvas > 1)[:, 0].mean())
+
+    row_nearest = marker_row(stitch_batch_nearest)
+    row_fourier = marker_row(stitch_batch_into, pad=0)
+    row_live = marker_row(stitch_batch_livestitch_into)
+
+    # nearest keeps the marker near the top of the footprint (no flip)...
+    assert row_nearest == 13
+    # ...while both flipping paths push it toward the bottom.
+    assert row_fourier == 17
+    assert row_live == 16
+    assert row_nearest < row_fourier and row_nearest < row_live
 
 
 def test_stitch_into_per_batch_equals_one_shot():
