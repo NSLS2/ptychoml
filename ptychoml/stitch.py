@@ -25,6 +25,23 @@ Both ``canvas`` and ``counts`` accumulate in place; the displayed/written
 mosaic is ``canvas / np.maximum(counts, 1)``. No normalization happens
 here — the caller decides the min-overlap threshold.
 
+Usage
+-----
+Allocate the mosaic once, then call the same function each batch
+(streaming) or once with every patch (offline) — same result either way::
+
+    canvas = np.zeros((H, W), np.float32)   # running sum of patch values
+    counts = np.zeros((H, W), np.float32)   # running occupancy count
+    for patches, positions_px in stream:    # patches (B, ph, pw); positions (B, 2) as (y, x)
+        canvas, counts, bbox = stitch_batch_livestitch_into(
+            canvas, counts, patches, positions_px,
+        )
+        mosaic = canvas / np.maximum(counts, 1)   # normalize for display/write
+
+``patches`` is always ``(B, ph, pw)`` — pass a single patch as
+``(1, ph, pw)``. Always reassign from the return value (the Fourier path
+may reallocate the canvas on edge straddle).
+
 Streaming safety
 ----------------
 All three strategies are streaming-safe: each patch is placed using only

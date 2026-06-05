@@ -175,6 +175,44 @@ The Fourier-shift and livestitch paths flip each patch up-down before
 placement (matching the ptycho-vit convention); `stitch_batch_nearest`
 does not.
 
+`patches` is always `(B, ph, pw)` — a single patch must be passed as
+`(1, ph, pw)`, not a bare 2-D array. The functions return the
+`(canvas, counts)` they accumulated into; always reassign from the return
+value (the Fourier path may reallocate the canvas when a patch straddles
+the edge).
+
+### Usage
+
+Allocate the mosaic once, then call the same function each batch
+(streaming) or once with every patch (offline) — the result is the same:
+
+```python
+import numpy as np
+from ptychoml.stitch import stitch_batch_livestitch_into
+
+H, W = 2048, 2048
+canvas = np.zeros((H, W), dtype=np.float32)  # running sum of patch values
+counts = np.zeros((H, W), dtype=np.float32)  # running occupancy count
+
+# --- Streaming: one call per incoming batch ---
+for patches, positions_px in stream:         # patches (B, ph, pw); positions (B, 2) as (y, x)
+    canvas, counts, (y0, y1, x0, x1) = stitch_batch_livestitch_into(
+        canvas, counts, patches, positions_px,
+    )
+    mosaic = canvas / np.maximum(counts, 1)   # normalize for display/write
+    repaint(mosaic[y0:y1, x0:x1])             # bbox = only the region that changed this batch
+
+# --- Offline / batch: a single call with every patch ---
+canvas, counts, _ = stitch_batch_livestitch_into(canvas, counts, all_patches, all_positions)
+mosaic = canvas / np.maximum(counts, 1)
+```
+
+Swap in `stitch_batch_into` (drop the bbox return) for sub-pixel
+Fourier-shift accuracy, or `stitch_batch_nearest` for the simplest
+integer placement. Normalization (`canvas / np.maximum(counts, 1)`) is
+always the caller's responsibility — apply a `min_overlap` mask there if
+you want to hide thinly-covered pixels.
+
 ### How these map onto holoptycho's pipeline
 
 holoptycho currently runs equivalent inline code rather than importing
