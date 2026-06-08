@@ -28,6 +28,7 @@ from .preprocess import (
     zero_pad_to_target,
 )
 from .stitch import (
+    normalize_mosaic,
     place_patches_fourier_shift,
     stitch_batch_into,
     stitch_batch_livestitch_into,
@@ -62,6 +63,7 @@ __all__ = [
     "mask_hot_pixels",
     "mask_hot_pixels_by_count",
     "normalize_intensity",
+    "normalize_mosaic",
     "place_patches_fourier_shift",
     "preprocess_diffraction",
     "remap_positions",

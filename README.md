@@ -158,11 +158,11 @@ Change the spatial extent of frames. Three variants by use case.
 ## Stitching (`ptychoml.stitch`)
 
 Patch-placement helpers that accumulate a batch of reconstructed ViT
-patches into a running `(canvas, counts)` mosaic. Both arrays accumulate
-in place; the displayed/written mosaic is `canvas / np.maximum(counts, 1)`
-(no normalization happens inside these functions — the caller picks the
-min-overlap threshold). `positions_px` is `(N, 2)` in canvas pixel
-coordinates `(y, x)` pointing at patch centers.
+patches into a running `(canvas, counts)` mosaic. The accumulators don't
+normalize — `normalize_mosaic(canvas, counts)` turns the pair into the
+displayed/written mosaic (`canvas / counts`, under-covered pixels masked to
+`NaN`). `positions_px` is `(N, 2)` in canvas pixel coordinates `(y, x)`
+pointing at patch centers.
 
 | Function | Purpose |
 |---|---|
@@ -170,8 +170,9 @@ coordinates `(y, x)` pointing at patch centers.
 | `stitch_batch_into(canvas, counts, patches, positions_px, *, pad=1)` | Accumulate one batch into `(canvas, counts)` using the Fourier-shift path. Scatter-add is associative, so per-batch accumulation matches one-shot stitching (up to FFT noise). |
 | `stitch_batch_livestitch_into(canvas, counts, patches, positions_px)` | Nearest-integer accumulation that also returns the `(y0, y1, x0, x1)` bounding box touched this batch — lets a live writer repaint only the changed sub-rectangle. Returns `(0, 0, 0, 0)` when nothing overlapped. |
 | `stitch_batch_nearest(canvas, counts, patches, positions_px)` | Plain nearest-integer scatter-add; clamps at canvas edges (no wrap). Simplest variant, handy as a JIT/cache warm-up kernel. |
+| `normalize_mosaic(canvas, counts, min_overlap=0.5)` | Average a `(canvas, counts)` pair into a display mosaic: covered pixels (`counts >= min_overlap`) become `canvas / counts`, under-covered pixels become `NaN`. Returns `(fill_value, mosaic)` where `fill_value` is the median of covered pixels (a neutral background for renderers that treat `NaN` as zero). The normalization companion to the `stitch_batch_*` accumulators. |
 
-**The three strategies are not pixel-interchangeable.** The Fourier-shift
+**The three placement strategies are not pixel-interchangeable.** The Fourier-shift
 and livestitch paths flip each patch up-down before placement (matching
 the ptycho-vit convention) while `stitch_batch_nearest` does not, and the
 three use slightly different center-rounding conventions (so a patch
@@ -192,7 +193,7 @@ Allocate the mosaic once, then call the same function each batch
 
 ```python
 import numpy as np
-from ptychoml.stitch import stitch_batch_livestitch_into
+from ptychoml.stitch import stitch_batch_livestitch_into, normalize_mosaic
 
 H, W = 2048, 2048
 canvas = np.zeros((H, W), dtype=np.float32)  # running sum of patch values
@@ -203,12 +204,12 @@ for patches, positions_px in stream:         # patches (B, ph, pw); positions (B
     canvas, counts, (y0, y1, x0, x1) = stitch_batch_livestitch_into(
         canvas, counts, patches, positions_px,
     )
-    mosaic = canvas / np.maximum(counts, 1)   # normalize for display/write
-    repaint(mosaic[y0:y1, x0:x1])             # bbox = only the region that changed this batch
+    fill, mosaic = normalize_mosaic(canvas, counts)   # under-covered pixels -> NaN
+    repaint(np.where(np.isnan(mosaic), fill, mosaic)[y0:y1, x0:x1])  # bbox = changed region
 
 # --- Offline / batch: a single call with every patch ---
 canvas, counts, _ = stitch_batch_livestitch_into(canvas, counts, all_patches, all_positions)
-mosaic = canvas / np.maximum(counts, 1)
+fill, mosaic = normalize_mosaic(canvas, counts)
 ```
 
 For sub-pixel accuracy use `stitch_batch_into` (drop the bbox return);
