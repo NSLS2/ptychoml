@@ -664,6 +664,50 @@ def compute_sample_pixel_size(
     return wavelength_m * detector_distance_m / (n_pixels * ccd_pixel_size_m)
 
 
+def inner_crop_from_probe(probe: ArrayLike, threshold: float = 0.5) -> int | None:
+    """Derive a ViT-patch ``inner_crop`` from the reconstruction probe.
+
+    The probe amplitude marks which pixels of each output patch carry
+    meaningful signal. For a roughly circular probe of radius ``R`` pixels
+    (measured at ``threshold`` × peak amplitude), the largest axis-aligned
+    square that fits inside the circle has half-side ``R / sqrt(2)``, so::
+
+        inner_crop = floor(patch_size / 2 - R / sqrt(2))
+
+    ``probe`` is a 2-D ``(H, W)`` patch-plane array; complex probes have their
+    amplitude taken via ``abs`` (a real array is treated as the amplitude
+    directly). Both a model's ONNX-baked probe and ``PtychoViTInference``'s
+    ``baked_probe`` can be passed here.
+
+    Returns the crop as an int clamped to ``[0, min(H, W) // 4]``, or ``None``
+    if the probe is empty / no pixel reaches the threshold (peak ≤ 0).
+
+    Source: holoptycho/vit_inference.py ``inner_crop_from_onnx`` (geometry).
+    """
+    amp = np.abs(np.asarray(probe))
+    if amp.ndim != 2:
+        raise ValueError(
+            f"probe must be a 2-D (H, W) array; got shape {amp.shape}"
+        )
+    peak = float(amp.max()) if amp.size else 0.0
+    if peak <= 0.0:
+        return None
+
+    patch_h, patch_w = amp.shape
+    cy, cx = patch_h / 2.0, patch_w / 2.0
+    y_idx, x_idx = np.ogrid[:patch_h, :patch_w]
+    r = np.sqrt((y_idx - cy) ** 2 + (x_idx - cx) ** 2)
+
+    support = r[amp >= threshold * peak]
+    if not len(support):
+        return None
+
+    radius = float(support.max())
+    inscribed_half = radius / np.sqrt(2)  # half-side of the inscribed square
+    inner_crop = int(np.floor(min(patch_h, patch_w) / 2.0 - inscribed_half))
+    return max(0, min(inner_crop, min(patch_h, patch_w) // 4))
+
+
 # ============================================================================
 # 5. Composed pipeline
 # ----------------------------------------------------------------------------

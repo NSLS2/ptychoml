@@ -12,6 +12,7 @@ from ptychoml.preprocess import (
     detect_dc_at_corner,
     estimate_roi,
     fourier_shift,
+    inner_crop_from_probe,
     inpaint_bad_pixels,
     mask_hot_pixels,
     mask_hot_pixels_by_count,
@@ -633,3 +634,67 @@ def test_detect_dc_at_corner_works_on_batched_input():
     stack = np.zeros((3, 16, 16), dtype=np.float32)
     stack[:, 8, 8] = 1000.0
     assert detect_dc_at_corner(stack) is False
+
+
+# ----- inner_crop_from_probe ------------------------------------------------
+
+def _probe_bright_pixel(n, y, x, val=1.0):
+    p = np.zeros((n, n), dtype=np.float32)
+    p[y, x] = val
+    return p
+
+
+def test_inner_crop_from_probe_inscribed_square():
+    # one bright pixel 30 px from centre (cy=cx=32.0) in a 64x64 patch:
+    # inner_crop = floor(64/2 - 30/sqrt2) = floor(32 - 21.21) = 10
+    probe = _probe_bright_pixel(64, 32, 62)  # x distance = 62 - 32 = 30
+    assert inner_crop_from_probe(probe) == 10
+
+
+def test_inner_crop_from_probe_clamped_to_quarter():
+    # support near centre -> large raw crop -> clamped to min(H, W)//4
+    probe = _probe_bright_pixel(64, 32, 34)  # x distance = 2 -> raw 31
+    assert inner_crop_from_probe(probe) == 16
+
+
+def test_inner_crop_from_probe_uses_complex_amplitude():
+    probe = np.zeros((64, 64), dtype=np.complex128)
+    probe[32, 62] = 3 + 4j  # |.| = 5, distance 30
+    assert inner_crop_from_probe(probe) == 10
+
+
+def test_inner_crop_from_probe_real_matches_complex():
+    real = _probe_bright_pixel(64, 32, 58)  # distance 26
+    assert inner_crop_from_probe(real) == inner_crop_from_probe(real + 0j)
+
+
+def test_inner_crop_from_probe_threshold_changes_support():
+    probe = np.zeros((64, 64), dtype=np.float32)
+    probe[32, 42] = 1.0   # bright core, distance 10
+    probe[32, 62] = 0.3   # dim halo, distance 30
+    # 0.5: only the core (r=10) -> floor(32 - 10/sqrt2) = 24 -> clamp 16
+    assert inner_crop_from_probe(probe, threshold=0.5) == 16
+    # 0.2: halo included (r=30) -> floor(32 - 30/sqrt2) = 10
+    assert inner_crop_from_probe(probe, threshold=0.2) == 10
+
+
+def test_inner_crop_from_probe_empty_returns_none():
+    assert inner_crop_from_probe(np.zeros((64, 64))) is None
+
+
+def test_inner_crop_from_probe_requires_2d():
+    with pytest.raises(ValueError):
+        inner_crop_from_probe(np.zeros((3, 64, 64)))
+
+
+def test_inner_crop_from_probe_matches_reference_geometry():
+    # lock to holoptycho's original inner_crop_from_onnx geometry on a
+    # realistic gaussian probe
+    n = 128
+    yy, xx = np.ogrid[:n, :n]
+    r = np.sqrt((yy - n / 2.0) ** 2 + (xx - n / 2.0) ** 2)
+    amp = np.exp(-(r ** 2) / (2 * 25.0 ** 2)).astype(np.float32)
+    thr = 0.5
+    support = r[amp >= thr * amp.max()]
+    ref = max(0, min(int(np.floor(n / 2.0 - float(support.max()) / np.sqrt(2))), n // 4))
+    assert inner_crop_from_probe(amp, thr) == ref
