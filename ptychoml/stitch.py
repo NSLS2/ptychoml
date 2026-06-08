@@ -349,3 +349,36 @@ def stitch_batch_nearest(
             canvas[sy0:sy1, sx0:sx1] += patches[i, py0:py1, px0:px1]
             counts[sy0:sy1, sx0:sx1] += 1.0
     return canvas, counts
+
+
+def normalize_mosaic(canvas, counts, min_overlap=0.5):
+    """Average a stitched ``(canvas, counts)`` pair into a display mosaic.
+
+    ``canvas`` is the running sum of placed patch values and ``counts`` the
+    running occupancy, both produced by the ``stitch_batch_*`` functions (which
+    deliberately leave normalization to the caller). A pixel is "covered" when
+    ``counts >= min_overlap``; covered pixels become ``canvas / counts`` and
+    under-covered pixels become ``NaN``.
+
+    Returns ``(fill_value, mosaic)`` where:
+
+    * ``mosaic`` is ``float32`` with ``NaN`` in the under-covered regions.
+    * ``fill_value`` is the median of the covered pixels — a neutral background
+      for renderers that treat ``NaN`` as zero (paint ``NaN`` with
+      ``fill_value`` before display). ``0.0`` when nothing is covered.
+
+    With the default ``min_overlap=0.5`` and integer-valued ``counts``, a pixel
+    counts as covered once it has been written at least once (count ``>= 1``).
+    Raise ``min_overlap`` to require multiple overlapping patches.
+
+    Source: holoptycho/vit_inference.py ``MosaicWriterOp._normalise_full``.
+    """
+    canvas = np.asarray(canvas)
+    counts = np.asarray(counts)
+    valid = counts >= min_overlap
+    if valid.any():
+        avg = canvas / np.where(valid, counts, 1.0)
+        fill = float(np.median(avg[valid]))
+        mosaic = np.where(valid, avg, np.nan).astype(np.float32)
+        return fill, mosaic
+    return 0.0, np.full(canvas.shape, np.nan, dtype=np.float32)

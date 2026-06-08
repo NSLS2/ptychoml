@@ -89,11 +89,13 @@ original names (zero behavior change). Three strategies:
 shift), `stitch_batch_livestitch_into` (nearest-integer + touched bbox),
 and `stitch_batch_nearest` (plain nearest-integer, edge-clamped).
 
-`canvas` and `counts` accumulate **in place**; callers normalize as
-`canvas / np.maximum(counts, 1)` — these functions never normalize. The
-Fourier-shift and livestitch paths flip each patch up-down before
-placement; `stitch_batch_nearest` does not. All edge handling clamps to
-the canvas (no wrap-around). Pure numpy + `scipy.fft`; depends only on
+The accumulators (`stitch_batch_*`) update `canvas`/`counts` **in place**
+and never normalize; `normalize_mosaic(canvas, counts, min_overlap=0.5)` is
+the companion that averages them into a display mosaic (`canvas / counts`,
+under-covered pixels → `NaN`, plus a median `fill_value` for `NaN`-blind
+renderers). The Fourier-shift and livestitch paths flip each patch up-down
+before placement; `stitch_batch_nearest` does not. All edge handling clamps
+to the canvas (no wrap-around). Pure numpy + `scipy.fft`; depends only on
 `fourier_shift` from `preprocess.py`.
 
 **Known gotcha — the three strategies are not pixel-interchangeable**

@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from ptychoml.stitch import (
+    normalize_mosaic,
     place_patches_fourier_shift,
     stitch_batch_into,
     stitch_batch_livestitch_into,
@@ -228,3 +229,110 @@ def test_place_patches_fourier_shift_boundary_padding():
     assert out.shape == (20, 20)
     assert out[10:, 10:].sum() == 0.0  # nothing leaked to the far corner
     assert out.sum() > 0.0  # the in-bounds portion was placed
+
+
+# ----- normalize_mosaic -----------------------------------------------------
+
+def test_normalize_mosaic_averages_covered_pixels():
+    canvas = np.array([[6.0, 0.0], [9.0, 4.0]], dtype=np.float32)
+    counts = np.array([[3.0, 0.0], [3.0, 2.0]], dtype=np.float32)
+
+    fill, mosaic = normalize_mosaic(canvas, counts, min_overlap=0.5)
+
+    # covered pixels = canvas / counts
+    assert mosaic[0, 0] == pytest.approx(2.0)
+    assert mosaic[1, 0] == pytest.approx(3.0)
+    assert mosaic[1, 1] == pytest.approx(2.0)
+    # the count==0 pixel is under-covered -> NaN
+    assert np.isnan(mosaic[0, 1])
+
+
+def test_normalize_mosaic_masks_undercovered_to_nan():
+    canvas = np.array([[5.0, 5.0]], dtype=np.float32)
+    counts = np.array([[5.0, 0.0]], dtype=np.float32)
+
+    _, mosaic = normalize_mosaic(canvas, counts)
+
+    assert mosaic[0, 0] == pytest.approx(1.0)
+    assert np.isnan(mosaic[0, 1])
+
+
+def test_normalize_mosaic_fill_is_median_of_covered():
+    # covered averaged values are 1, 2, 3 -> median 2; the NaN pixel is excluded
+    canvas = np.array([[1.0, 2.0, 3.0, 7.0]], dtype=np.float32)
+    counts = np.array([[1.0, 1.0, 1.0, 0.0]], dtype=np.float32)
+
+    fill, _ = normalize_mosaic(canvas, counts)
+
+    assert fill == pytest.approx(2.0)
+
+
+def test_normalize_mosaic_threshold_is_inclusive():
+    # count exactly equal to the threshold counts as covered
+    canvas = np.array([[4.0]], dtype=np.float32)
+    counts = np.array([[2.0]], dtype=np.float32)
+
+    _, mosaic = normalize_mosaic(canvas, counts, min_overlap=2.0)
+
+    assert mosaic[0, 0] == pytest.approx(2.0)
+    assert not np.isnan(mosaic[0, 0])
+
+
+def test_normalize_mosaic_higher_threshold_excludes_thin_coverage():
+    canvas = np.array([[2.0, 6.0]], dtype=np.float32)
+    counts = np.array([[1.0, 3.0]], dtype=np.float32)
+
+    _, mosaic = normalize_mosaic(canvas, counts, min_overlap=2.0)
+
+    assert np.isnan(mosaic[0, 0])          # count 1 < 2 -> dropped
+    assert mosaic[0, 1] == pytest.approx(2.0)
+
+
+def test_normalize_mosaic_empty_returns_zero_and_all_nan():
+    canvas = np.zeros((3, 3), dtype=np.float32)
+    counts = np.zeros((3, 3), dtype=np.float32)
+
+    fill, mosaic = normalize_mosaic(canvas, counts)
+
+    assert fill == 0.0
+    assert mosaic.shape == (3, 3)
+    assert np.isnan(mosaic).all()
+
+
+def test_normalize_mosaic_returns_float32():
+    canvas = np.ones((2, 2), dtype=np.float64)
+    counts = np.ones((2, 2), dtype=np.float64)
+
+    _, mosaic = normalize_mosaic(canvas, counts)
+
+    assert mosaic.dtype == np.float32
+
+
+def test_normalize_mosaic_does_not_mutate_inputs():
+    canvas = np.array([[4.0, 0.0]], dtype=np.float32)
+    counts = np.array([[2.0, 0.0]], dtype=np.float32)
+    canvas_ref = canvas.copy()
+    counts_ref = counts.copy()
+
+    normalize_mosaic(canvas, counts)
+
+    np.testing.assert_array_equal(canvas, canvas_ref)
+    np.testing.assert_array_equal(counts, counts_ref)
+
+
+def test_normalize_mosaic_after_livestitch_recovers_patch_value():
+    # stitch two non-overlapping all-ones patches, then normalize: covered
+    # region should read back the patch value (1.0), rest NaN.
+    canvas = np.zeros((40, 40), dtype=np.float32)
+    counts = np.zeros((40, 40), dtype=np.float32)
+    patches = np.ones((2, 6, 6), dtype=np.float32)
+    positions = np.array([[10.0, 10.0], [10.0, 30.0]])
+
+    canvas, counts, _ = stitch_batch_livestitch_into(canvas, counts, patches, positions)
+    fill, mosaic = normalize_mosaic(canvas, counts)
+
+    covered = counts >= 0.5
+    assert covered.sum() == 2 * 6 * 6
+    np.testing.assert_allclose(mosaic[covered], 1.0, atol=1e-6)
+    assert np.isnan(mosaic[~covered]).all()
+    assert fill == pytest.approx(1.0)
