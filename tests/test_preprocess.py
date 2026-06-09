@@ -20,6 +20,7 @@ from ptychoml.preprocess import (
     preprocess_diffraction,
     remap_positions,
     resize_diffraction_patterns,
+    spatially_diverse_sample,
     zero_pad_to_target,
 )
 
@@ -698,3 +699,60 @@ def test_inner_crop_from_probe_matches_reference_geometry():
     support = r[amp >= thr * amp.max()]
     ref = max(0, min(int(np.floor(n / 2.0 - float(support.max()) / np.sqrt(2))), n // 4))
     assert inner_crop_from_probe(amp, thr) == ref
+
+
+# ----- spatially_diverse_sample ---------------------------------------------
+
+def test_spatially_diverse_sample_returns_all_when_target_exceeds_n():
+    x = np.array([0.0, 1.0, 2.0])
+    y = np.array([0.0, 1.0, 2.0])
+    out = spatially_diverse_sample(x, y, n_target=10, rng=np.random.default_rng(0))
+    np.testing.assert_array_equal(out, np.arange(3))
+
+
+def test_spatially_diverse_sample_is_sorted_and_in_range():
+    rng = np.random.default_rng(0)
+    x = rng.uniform(0, 10, size=200)
+    y = rng.uniform(0, 10, size=200)
+    out = spatially_diverse_sample(x, y, n_target=16, rng=np.random.default_rng(1))
+    assert np.all(np.diff(out) > 0)          # strictly increasing (sorted, unique)
+    assert out.min() >= 0 and out.max() < 200
+
+
+def test_spatially_diverse_sample_one_per_occupied_cell():
+    # 16 points, one dead-centre in each cell of a 4x4 grid over [0,4]x[0,4].
+    # n_target=16 -> grid_n=4 -> every cell occupied -> all 16 selected.
+    xs, ys = np.meshgrid(np.arange(4) + 0.5, np.arange(4) + 0.5)
+    x = xs.ravel()
+    y = ys.ravel()
+    out = spatially_diverse_sample(x, y, n_target=16, rng=np.random.default_rng(0))
+    assert len(out) == 16
+    np.testing.assert_array_equal(out, np.arange(16))
+
+
+def test_spatially_diverse_sample_covers_spread_not_cluster():
+    # 100 points jammed in one corner + 4 lone points in the other corners.
+    # The selection must include the spread-out corners, not just the cluster.
+    rng = np.random.default_rng(0)
+    cluster_x = rng.uniform(0, 0.5, size=100)
+    cluster_y = rng.uniform(0, 0.5, size=100)
+    corners_x = np.array([9.5, 0.0, 9.5])
+    corners_y = np.array([9.5, 9.5, 0.0])
+    x = np.concatenate([cluster_x, corners_x])
+    y = np.concatenate([cluster_y, corners_y])
+
+    out = spatially_diverse_sample(x, y, n_target=16, rng=np.random.default_rng(2))
+
+    # the three far corners (indices 100,101,102) must all be picked
+    assert set([100, 101, 102]).issubset(set(out.tolist()))
+    # and the 100-point cluster contributes at most a handful (its few cells)
+    assert sum(i < 100 for i in out) <= 4
+
+
+def test_spatially_diverse_sample_deterministic_with_seed():
+    rng = np.random.default_rng(0)
+    x = rng.uniform(0, 10, size=300)
+    y = rng.uniform(0, 10, size=300)
+    a = spatially_diverse_sample(x, y, 25, rng=np.random.default_rng(7))
+    b = spatially_diverse_sample(x, y, 25, rng=np.random.default_rng(7))
+    np.testing.assert_array_equal(a, b)

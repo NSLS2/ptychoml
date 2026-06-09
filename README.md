@@ -155,6 +155,7 @@ Change the spatial extent of frames. Three variants by use case.
 | `fourier_shift(images, shifts)` | Sub-pixel shift each `(H, W)` plane by `shifts[i] = (dy, dx)` via FFT phase-ramp multiplication. |
 | `compute_sample_pixel_size(wavelength_m, detector_distance_m, ccd_pixel_size_m, n_pixels)` | Far-field pixel size at the sample plane: `λ z / (N · dx_detector)`. |
 | `inner_crop_from_probe(probe, threshold=0.5)` | Derive a ViT-patch `inner_crop` from the reconstruction probe: for a circular probe of radius `R` (at `threshold` × peak amplitude) the inscribed square gives `floor(patch/2 − R/√2)`, clamped to `[0, patch//4]`. Pass a complex or real 2-D probe (e.g. an ONNX-baked probe or `PtychoViTInference.baked_probe`). `None` if the probe is empty. |
+| `spatially_diverse_sample(x, y, n_target, rng=None)` | Select up to `n_target` spatially-spread indices from 2-D scan positions by bucketing the bounding box into a `√n_target × √n_target` grid and picking one point per occupied cell (so a subset covers the scan area rather than clustering). Returns sorted indices; pass a seeded `rng` for reproducibility. |
 
 ## Stitching (`ptychoml.stitch`)
 
