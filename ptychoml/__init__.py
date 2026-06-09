@@ -26,6 +26,7 @@ from .preprocess import (
     preprocess_diffraction,
     remap_positions,
     resize_diffraction_patterns,
+    spatially_diverse_sample,
     zero_pad_to_target,
 )
 from .stitch import (
@@ -71,6 +72,7 @@ __all__ = [
     "remap_positions",
     "resize_diffraction_patterns",
     "save_engine",
+    "spatially_diverse_sample",
     "stitch_batch_into",
     "stitch_batch_livestitch_into",
     "stitch_batch_nearest",

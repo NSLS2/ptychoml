@@ -648,6 +648,42 @@ def remap_positions(
     return out
 
 
+def spatially_diverse_sample(x, y, n_target, rng=None):
+    """Select up to ``n_target`` spatially-spread indices from a 2-D point set.
+
+    Buckets the bounding box of ``(x, y)`` into a roughly ``sqrt(n_target)`` ×
+    ``sqrt(n_target)`` grid and picks one random point per occupied cell, so
+    the selection covers the whole scan area instead of clustering. (A uniform
+    random sample can clump in one region, where coincidentally symmetric
+    structure could make a wrong orientation score well — this guarantees
+    coverage.)
+
+    ``x`` and ``y`` are 1-D position arrays of equal length. ``rng`` is an
+    optional ``numpy.random.Generator`` (a fresh default is used if omitted);
+    pass a seeded one for reproducible selection. Returns a **sorted** array of
+    selected indices into ``x``/``y``. If ``n_target >= len(x)`` all indices are
+    returned. The result has one index per *occupied* grid cell, so its length
+    is approximately — not exactly — ``n_target`` (fewer if points cluster).
+
+    Source: holoptycho/scripts/detect_orientation.py ``_spatially_diverse_sample``.
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+    n = len(x)
+    if n_target >= n:
+        return np.arange(n)
+    if rng is None:
+        rng = np.random.default_rng()
+    grid_n = max(1, int(np.ceil(np.sqrt(n_target))))
+    x_edges = np.linspace(x.min(), x.max() + 1e-12, grid_n + 1)
+    y_edges = np.linspace(y.min(), y.max() + 1e-12, grid_n + 1)
+    bx = np.clip(np.searchsorted(x_edges, x, side='right') - 1, 0, grid_n - 1)
+    by = np.clip(np.searchsorted(y_edges, y, side='right') - 1, 0, grid_n - 1)
+    bucket = by * grid_n + bx
+    chosen = [rng.choice(np.where(bucket == b)[0]) for b in np.unique(bucket)]
+    return np.sort(np.array(chosen))
+
+
 def compute_sample_pixel_size(
     wavelength_m: float,
     detector_distance_m: float,
