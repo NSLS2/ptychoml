@@ -652,10 +652,12 @@ def test_inner_crop_from_probe_inscribed_square():
     assert inner_crop_from_probe(probe) == 10
 
 
-def test_inner_crop_from_probe_clamped_to_quarter():
-    # support near centre -> large raw crop -> clamped to min(H, W)//4
-    probe = _probe_bright_pixel(64, 32, 34)  # x distance = 2 -> raw 31
-    assert inner_crop_from_probe(probe) == 16
+def test_inner_crop_from_probe_small_support_not_capped():
+    # support near centre -> large crop. The upper bound is intentionally not
+    # capped at min(H, W)//4: a small probe may legitimately need a large crop.
+    # inner_crop = floor(64/2 - 2/sqrt2) = floor(32 - 1.41) = 30 (non-negative only)
+    probe = _probe_bright_pixel(64, 32, 34)  # x distance = 2
+    assert inner_crop_from_probe(probe) == 30
 
 
 def test_inner_crop_from_probe_uses_complex_amplitude():
@@ -673,8 +675,8 @@ def test_inner_crop_from_probe_threshold_changes_support():
     probe = np.zeros((64, 64), dtype=np.float32)
     probe[32, 42] = 1.0   # bright core, distance 10
     probe[32, 62] = 0.3   # dim halo, distance 30
-    # 0.5: only the core (r=10) -> floor(32 - 10/sqrt2) = 24 -> clamp 16
-    assert inner_crop_from_probe(probe, threshold=0.5) == 16
+    # 0.5: only the core (r=10) -> floor(32 - 10/sqrt2) = 24 (no upper cap)
+    assert inner_crop_from_probe(probe, threshold=0.5) == 24
     # 0.2: halo included (r=30) -> floor(32 - 30/sqrt2) = 10
     assert inner_crop_from_probe(probe, threshold=0.2) == 10
 
@@ -697,7 +699,8 @@ def test_inner_crop_from_probe_matches_reference_geometry():
     amp = np.exp(-(r ** 2) / (2 * 25.0 ** 2)).astype(np.float32)
     thr = 0.5
     support = r[amp >= thr * amp.max()]
-    ref = max(0, min(int(np.floor(n / 2.0 - float(support.max()) / np.sqrt(2))), n // 4))
+    # non-negative only; no min(..., n // 4) upper cap (dropped in the impl)
+    ref = max(0, int(np.floor(n / 2.0 - float(support.max()) / np.sqrt(2))))
     assert inner_crop_from_probe(amp, thr) == ref
 
 

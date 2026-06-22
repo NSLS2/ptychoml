@@ -715,8 +715,12 @@ def inner_crop_from_probe(probe: ArrayLike, threshold: float = 0.5) -> int | Non
     directly). Both a model's ONNX-baked probe and ``PtychoViTInference``'s
     ``baked_probe`` can be passed here.
 
-    Returns the crop as an int clamped to ``[0, min(H, W) // 4]``, or ``None``
-    if the probe is empty / no pixel reaches the threshold (peak ≤ 0).
+    Returns the crop as a non-negative int, or ``None`` if the probe is empty /
+    no pixel reaches the threshold (peak ≤ 0). The result is clamped to ``0``
+    below but has no upper cap: a small probe may legitimately need a crop
+    larger than ``min(H, W) // 4``. Callers that stitch are expected to guard
+    against a crop so large that no usable patch area remains (e.g.
+    holoptycho's ``_ensure_canvas`` disables stitching in that case).
 
     Source: holoptycho/vit_inference.py ``inner_crop_from_onnx`` (geometry).
     """
