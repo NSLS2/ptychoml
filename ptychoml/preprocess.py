@@ -741,7 +741,7 @@ def inner_crop_from_probe(probe: ArrayLike, threshold: float = 0.5) -> int | Non
     radius = float(support.max())
     inscribed_half = radius / np.sqrt(2)  # half-side of the inscribed square
     inner_crop = int(np.floor(min(patch_h, patch_w) / 2.0 - inscribed_half))
-    return max(0, min(inner_crop, min(patch_h, patch_w) // 4))
+    return max(0, inner_crop)
 
 
 # ============================================================================
