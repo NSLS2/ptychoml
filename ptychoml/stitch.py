@@ -285,9 +285,6 @@ def stitch_batch_livestitch_into(
     y1 = y0 + ph
     x1 = x0 + pw
 
-    # Up-down flip the patch before placement
-    patches = patches[:, ::-1, :]
-
     valid = (y1 > 0) & (x1 > 0) & (y0 < H) & (x0 < W)
 
     if not np.any(valid):
@@ -382,3 +379,32 @@ def normalize_mosaic(canvas, counts, min_overlap=0.5):
         mosaic = np.where(valid, avg, np.nan).astype(np.float32)
         return fill, mosaic
     return 0.0, np.full(canvas.shape, np.nan, dtype=np.float32)
+
+
+def crop_mosaic_border(
+    mosaic: np.ndarray,
+    border: int = 0,
+) -> np.ndarray:
+    """Crop the partially-covered border from a stitched mosaic.
+
+    Removes ``border`` pixels from each edge — the region where patches only
+    partially overlap because their centres fall within half a patch-width of
+    the scan boundary.  Compute it as ``patch_size // 2 - inner_crop`` (the
+    half-patch width minus the inner crop already applied before stitching).
+
+    Args:
+        mosaic: 2-D array from :func:`normalize_mosaic`.
+        border: Pixels to remove from each edge.  Compute as
+                ``patch_size // 2 - inner_crop``.
+
+    Returns:
+        Cropped view of ``mosaic`` with shape ``(H - 2*border, W - 2*border)``.
+        Returns ``mosaic`` unchanged when ``border <= 0`` or the mosaic is too
+        small to crop.
+    """
+    if border <= 0:
+        return mosaic
+    h, w = mosaic.shape
+    if h <= 2 * border or w <= 2 * border:
+        return mosaic
+    return mosaic[border:-border, border:-border]

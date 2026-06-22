@@ -3,6 +3,7 @@ import numpy as np
 import pytest
 
 from ptychoml.stitch import (
+    crop_mosaic_border,
     normalize_mosaic,
     place_patches_fourier_shift,
     stitch_batch_into,
@@ -83,8 +84,8 @@ def test_livestitch_bbox_single_patch():
     assert counts[8:12, 8:12].sum() == pytest.approx(16.0)
 
 
-def test_livestitch_applies_updown_flip():
-    """LiveStitch flips patches up-down before placement (matches Fourier path)."""
+def test_livestitch_does_not_flip():
+    """LiveStitch preserves patch orientation (no up-down flip), matching nearest."""
     canvas = np.zeros((20, 20), dtype=np.float32)
     counts = np.zeros((20, 20), dtype=np.float32)
     patch = np.zeros((4, 4), dtype=np.float32)
@@ -94,8 +95,8 @@ def test_livestitch_applies_updown_flip():
 
     canvas, _, _ = stitch_batch_livestitch_into(canvas, counts, patches, pos)
 
-    assert canvas[11, 8] == 5.0  # top row flipped to the bottom
-    assert canvas[8, 8] == 0.0
+    assert canvas[8, 8] == 5.0   # top row stays at the top (no flip)
+    assert canvas[11, 8] == 0.0
 
 
 def test_livestitch_no_overlap_returns_zero_bbox():
@@ -165,15 +166,14 @@ def test_fourier_and_nearest_share_counts_footprint():
 
 
 def test_methods_differ_by_updown_flip():
-    """The three strategies are NOT pixel-interchangeable: nearest places the
-    patch as-is, while the Fourier and livestitch paths flip it up-down (and
-    use slightly different center-rounding). Verified with a non-symmetric
-    patch whose only non-zero row is the top one."""
+    """nearest and livestitch place patches as-is (no flip); the Fourier path
+    flips up-down due to its FFT phase-ramp convention. Verified with a
+    non-symmetric patch whose only non-zero row is the top one."""
     patch = np.zeros((5, 5), dtype=np.float32)
     patch[0, :] = 9.0  # top-row marker
     pos = np.array([[15.0, 15.0]])
 
-    def marker_row(fn, *, livestitch=False, **kw):
+    def marker_row(fn, **kw):
         canvas = np.zeros((30, 30), dtype=np.float32)
         counts = np.zeros((30, 30), dtype=np.float32)
         out = fn(canvas, counts, patch[None].copy(), pos, **kw)
@@ -182,14 +182,16 @@ def test_methods_differ_by_updown_flip():
 
     row_nearest = marker_row(stitch_batch_nearest)
     row_fourier = marker_row(stitch_batch_into, pad=0)
-    row_live = marker_row(stitch_batch_livestitch_into)
+    row_live    = marker_row(stitch_batch_livestitch_into)
 
-    # nearest keeps the marker near the top of the footprint (no flip)...
-    assert row_nearest == 13
-    # ...while both flipping paths push it toward the bottom.
+    # nearest and livestitch both preserve orientation (no flip); they differ
+    # by at most 1 px due to different half-integer rounding conventions
+    assert row_nearest == 13   # round(pos) - ph//2
+    assert row_live    == 12   # rint(pos - ph/2) -- banker's rounding
+    # Fourier path flips, pushing the marker toward the bottom
     assert row_fourier == 17
-    assert row_live == 16
-    assert row_nearest < row_fourier and row_nearest < row_live
+    assert row_nearest < row_fourier
+    assert row_live    < row_fourier
 
 
 def test_stitch_into_per_batch_equals_one_shot():
@@ -336,3 +338,34 @@ def test_normalize_mosaic_after_livestitch_recovers_patch_value():
     np.testing.assert_allclose(mosaic[covered], 1.0, atol=1e-6)
     assert np.isnan(mosaic[~covered]).all()
     assert fill == pytest.approx(1.0)
+
+
+# ----- crop_mosaic_border ---------------------------------------------------
+
+def test_crop_mosaic_border_explicit_border():
+    """Explicit border=64 crops 64 px each side."""
+    mosaic = np.ones((700, 700), dtype=np.float32)
+    cropped = crop_mosaic_border(mosaic, border=64)
+    assert cropped.shape == (700 - 2 * 64, 700 - 2 * 64)
+
+
+def test_crop_mosaic_border_no_crop_when_border_zero():
+    """border=0 → mosaic returned unchanged."""
+    mosaic = np.ones((400, 400), dtype=np.float32)
+    cropped = crop_mosaic_border(mosaic, border=0)
+    assert cropped.shape == mosaic.shape
+    assert cropped is mosaic
+
+
+def test_crop_mosaic_border_preserves_values():
+    """Interior values are unchanged after crop."""
+    mosaic = np.arange(400, dtype=np.float32).reshape(20, 20)
+    cropped = crop_mosaic_border(mosaic, border=4)
+    np.testing.assert_array_equal(cropped, mosaic[4:-4, 4:-4])
+
+
+def test_crop_mosaic_border_default_is_noop():
+    """Default border=0 returns mosaic unchanged."""
+    mosaic = np.ones((300, 300), dtype=np.float32)
+    cropped = crop_mosaic_border(mosaic)
+    assert cropped is mosaic
