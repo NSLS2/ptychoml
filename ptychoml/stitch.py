@@ -399,12 +399,21 @@ def crop_mosaic_border(
 
     Returns:
         Cropped view of ``mosaic`` with shape ``(H - 2*border, W - 2*border)``.
-        Returns ``mosaic`` unchanged when ``border <= 0`` or the mosaic is too
-        small to crop.
+        Returns ``mosaic`` unchanged when ``border <= 0``.
+
+    Raises:
+        ValueError: when ``2 * border`` is >= either mosaic dimension, i.e. the
+            crop would leave no pixels.  The canvas size is fixed at scan start
+            (from the commanded scan range), so this is a deterministic
+            configuration error — fail loudly rather than silently ship an
+            un-cropped or degenerate mosaic.
     """
     if border <= 0:
         return mosaic
     h, w = mosaic.shape
     if h <= 2 * border or w <= 2 * border:
-        return mosaic
+        raise ValueError(
+            f"crop_mosaic_border: border={border} too large for mosaic "
+            f"{(h, w)} — 2*border must be < both dimensions."
+        )
     return mosaic[border:-border, border:-border]

@@ -30,6 +30,7 @@ from .preprocess import (
     zero_pad_to_target,
 )
 from .stitch import (
+    crop_mosaic_border,
     normalize_mosaic,
     place_patches_fourier_shift,
     stitch_batch_into,
@@ -56,6 +57,7 @@ __all__ = [
     "build_engine",
     "compute_intensity_normalization",
     "compute_sample_pixel_size",
+    "crop_mosaic_border",
     "crop_to_roi",
     "detect_dc_at_corner",
     "estimate_roi",

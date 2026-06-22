@@ -369,3 +369,25 @@ def test_crop_mosaic_border_default_is_noop():
     mosaic = np.ones((300, 300), dtype=np.float32)
     cropped = crop_mosaic_border(mosaic)
     assert cropped is mosaic
+
+
+def test_crop_mosaic_border_raises_when_too_large():
+    """A border that would leave no pixels fails hard (deterministic config error)."""
+    mosaic = np.ones((100, 100), dtype=np.float32)
+    with pytest.raises(ValueError):
+        crop_mosaic_border(mosaic, border=60)
+
+
+def test_crop_mosaic_border_raises_at_exact_half():
+    """2*border == dimension leaves zero pixels → raise, not empty array."""
+    mosaic = np.ones((100, 100), dtype=np.float32)
+    with pytest.raises(ValueError):
+        crop_mosaic_border(mosaic, border=50)
+
+
+def test_crop_mosaic_border_is_exported():
+    """crop_mosaic_border is reachable from the package top level."""
+    import ptychoml
+
+    assert ptychoml.crop_mosaic_border is crop_mosaic_border
+    assert "crop_mosaic_border" in ptychoml.__all__
