@@ -652,10 +652,12 @@ def test_inner_crop_from_probe_inscribed_square():
     assert inner_crop_from_probe(probe) == 10
 
 
-def test_inner_crop_from_probe_clamped_to_quarter():
-    # support near centre -> large raw crop -> clamped to min(H, W)//4
-    probe = _probe_bright_pixel(64, 32, 34)  # x distance = 2 -> raw 31
-    assert inner_crop_from_probe(probe) == 16
+def test_inner_crop_from_probe_small_support_not_capped():
+    # support near centre -> large crop. The upper bound is intentionally not
+    # capped at min(H, W)//4: a small probe may legitimately need a large crop.
+    # inner_crop = floor(64/2 - 2/sqrt2) = floor(32 - 1.41) = 30 (non-negative only)
+    probe = _probe_bright_pixel(64, 32, 34)  # x distance = 2
+    assert inner_crop_from_probe(probe) == 30
 
 
 def test_inner_crop_from_probe_uses_complex_amplitude():
